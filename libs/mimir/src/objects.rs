@@ -606,22 +606,6 @@ impl Admin {
             _ => false,
         }
     }
-
-    pub fn find_admin<P>(&self, mut predicate: P) -> Option<&Self>
-    where
-        P: Copy + FnMut(&Self) -> bool,
-    {
-        self.administrative_regions
-            .iter()
-            .filter_map(|parent| {
-                if predicate(parent.as_ref()) {
-                    Some(parent.as_ref())
-                } else {
-                    parent.find_admin(predicate)
-                }
-            })
-            .next()
-    }
 }
 
 fn custom_multi_polygon_serialize<S>(
@@ -755,25 +739,6 @@ pub struct Street {
 
     pub context: Option<Context>,
 }
-
-impl Street {
-    pub fn find_admin<P>(&self, mut predicate: P) -> Option<&Admin>
-    where
-        P: Copy + FnMut(&Admin) -> bool,
-    {
-        self.administrative_regions
-            .iter()
-            .filter_map(|parent| {
-                if predicate(parent.as_ref()) {
-                    Some(parent.as_ref())
-                } else {
-                    parent.find_admin(predicate)
-                }
-            })
-            .next()
-    }
-}
-
 impl Incr for Street {
     fn id(&self) -> &str {
         &self.id
@@ -1042,4 +1007,44 @@ fn test_normalize_id() {
         normalize_id("stop_area", "SIN:SA:ABCDE:StopArea:1234"),
         "stop_area:SIN:SA:ABCDE:1234"
     );
+}
+
+/// Represent an object which is contained inside an admin hierarchy.
+pub trait InsideAdmin {
+    fn parent_admins(&self) -> &[Arc<Admin>];
+
+    /// Return an arbitrary admin containing this object which satisfies a predicate.
+    fn find_admin<P>(&self, mut predicate: P) -> Option<&Admin>
+    where
+        P: Copy + FnMut(&Admin) -> bool,
+    {
+        self.parent_admins()
+            .iter()
+            .filter_map(|parent| {
+                if predicate(parent.as_ref()) {
+                    Some(parent.as_ref())
+                } else {
+                    parent.find_admin(predicate)
+                }
+            })
+            .next()
+    }
+}
+
+impl InsideAdmin for Admin {
+    fn parent_admins(&self) -> &[Arc<Admin>] {
+        &self.administrative_regions
+    }
+}
+
+impl InsideAdmin for Street {
+    fn parent_admins(&self) -> &[Arc<Admin>] {
+        &self.administrative_regions
+    }
+}
+
+impl InsideAdmin for Addr {
+    fn parent_admins(&self) -> &[Arc<Admin>] {
+        self.street.parent_admins()
+    }
 }
