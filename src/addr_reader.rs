@@ -1,12 +1,14 @@
 use crate::Error;
+use cosmogony::ZoneType;
 use csv;
 use failure::ResultExt;
 use flate2::read::GzDecoder;
 use mimir::rubber::{IndexSettings, IndexVisibility, Rubber};
-use mimir::Addr;
+use mimir::{Addr, Admin};
 use par_map::ParMap;
 use serde::de::DeserializeOwned;
 use slog_scope::{error, info, warn};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::marker::{Send, Sync};
@@ -29,6 +31,9 @@ where
         .with_context(|_| format!("Error occurred when making index {}", dataset))?;
 
     info!("Add data in elasticsearch db.");
+
+    let mut country_stats = HashMap::new();
+
     let iter = addresses
         .into_iter()
         .with_nb_threads(nb_threads)
@@ -46,6 +51,20 @@ where
                 warn!("Address Error ignored: {}", err);
                 None
             }
+        })
+        .inspect(|addr| {
+            let top_admin_name = addr
+                .street
+                .find_admin(|admin: &Admin| admin.zone_type == Some(ZoneType::Country))
+                .and_then(|admin| admin.country_codes.iter().min());
+
+            if let Some(admin_name) = top_admin_name {
+                let count = country_stats.get_mut(admin_name).map(|count| *count += 1);
+
+                if count.is_none() {
+                    country_stats.insert(admin_name.to_string(), 1);
+                }
+            }
         });
 
     let nb = rubber
@@ -56,6 +75,12 @@ where
     rubber
         .publish_index(dataset, addr_index, IndexVisibility::Public)
         .context("Error while publishing the index")?;
+
+    println!("Addresses imported per country:");
+    for (country, count) in country_stats {
+        println!("{:>15} {}", country, count);
+    }
+
     Ok(())
 }
 

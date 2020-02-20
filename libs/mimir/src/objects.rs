@@ -606,6 +606,22 @@ impl Admin {
             _ => false,
         }
     }
+
+    pub fn find_admin<P>(&self, mut predicate: P) -> Option<&Self>
+    where
+        P: Copy + FnMut(&Self) -> bool,
+    {
+        self.administrative_regions
+            .iter()
+            .filter_map(|parent| {
+                if predicate(parent.as_ref()) {
+                    Some(parent.as_ref())
+                } else {
+                    parent.find_admin(predicate)
+                }
+            })
+            .next()
+    }
 }
 
 fn custom_multi_polygon_serialize<S>(
@@ -739,6 +755,25 @@ pub struct Street {
 
     pub context: Option<Context>,
 }
+
+impl Street {
+    pub fn find_admin<P>(&self, mut predicate: P) -> Option<&Admin>
+    where
+        P: Copy + FnMut(&Admin) -> bool,
+    {
+        self.administrative_regions
+            .iter()
+            .filter_map(|parent| {
+                if predicate(parent.as_ref()) {
+                    Some(parent.as_ref())
+                } else {
+                    parent.find_admin(predicate)
+                }
+            })
+            .next()
+    }
+}
+
 impl Incr for Street {
     fn id(&self) -> &str {
         &self.id
