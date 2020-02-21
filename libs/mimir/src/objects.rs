@@ -1048,3 +1048,15 @@ impl InsideAdmin for Addr {
         self.street.parent_admins()
     }
 }
+
+impl InsideAdmin for Stop {
+    fn parent_admins(&self) -> &[Arc<Admin>] {
+        &self.administrative_regions
+    }
+}
+
+impl InsideAdmin for Poi {
+    fn parent_admins(&self) -> &[Arc<Admin>] {
+        &self.administrative_regions
+    }
+}
