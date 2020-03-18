@@ -40,7 +40,7 @@ global = 1.0
 
         [importance_query.weights.no_coords]
         admin = 0.03
-        factor = 0.75
+        factor = 0.3
         missing = 0.0
 
     [importance_query.proximity]
