@@ -21,7 +21,7 @@ pub enum ActixError {
 }
 
 impl actix_web::error::ResponseError for ActixError {
-    fn render_response(&self) -> actix_web::HttpResponse {
+    fn error_response(&self) -> actix_web::HttpResponse {
         match *self {
             ActixError::InvalidJson(_) => actix_web::HttpResponse::BadRequest().json(ApiError {
                 short: "validation error".to_owned(),
@@ -62,15 +62,17 @@ where
     T: serde::de::DeserializeOwned,
 {
     type Error = ActixError;
-    type Future = Result<Self, ActixError>;
+    type Future = crate::Ready<Result<Self, ActixError>>;
     type Config = ();
 
     #[inline]
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         // Note: we need a non strict serde_qs to be able to parse the %5B / %5D as '[' / ']'
-        serde_qs::Config::new(5, false)
-            .deserialize_str(req.query_string())
-            .map_err(|e| ActixError::InvalidQueryParam(format!("{}", e)))
-            .map(BragiQuery)
+        crate::ready(
+            serde_qs::Config::new(5, false)
+                .deserialize_str(req.query_string())
+                .map_err(|e| ActixError::InvalidQueryParam(format!("{}", e)))
+                .map(BragiQuery),
+        )
     }
 }

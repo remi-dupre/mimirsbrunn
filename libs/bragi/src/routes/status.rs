@@ -9,7 +9,7 @@ pub struct Status {
     pub status: String,
 }
 
-pub fn status(state: Data<Context>) -> Json<Status> {
+pub async fn status(state: Data<Context>) -> Json<Status> {
     Json(Status {
         version: env!("CARGO_PKG_VERSION").to_string(),
         es: state.cnx_string.clone(),

@@ -17,7 +17,7 @@ pub struct Params {
     timeout: Option<u64>,
 }
 
-pub fn features(
+pub async fn features(
     params: BragiQuery<Params>,
     state: Data<Context>,
     id: Path<String>,

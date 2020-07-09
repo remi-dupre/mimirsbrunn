@@ -30,8 +30,9 @@
 
 use slog_scope::debug;
 
-fn main() -> Result<(), String> {
+#[actix_rt::main]
+async fn main() -> Result<(), String> {
     let _guard = mimir::logger_init();
     debug!("running bragi webserver");
-    bragi::server::runserver()
+    bragi::server::runserver().await
 }

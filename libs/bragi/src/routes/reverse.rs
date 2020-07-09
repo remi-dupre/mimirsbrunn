@@ -14,7 +14,7 @@ pub struct Params {
     timeout: Option<u64>,
 }
 
-pub fn reverse(
+pub async fn reverse(
     params: BragiQuery<Params>,
     state: Data<Context>,
 ) -> Result<HttpResponse, model::BragiError> {

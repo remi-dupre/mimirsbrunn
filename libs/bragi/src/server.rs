@@ -8,7 +8,7 @@ use actix_web::{middleware, web, App, HttpRequest, HttpServer};
 use std::convert::TryInto;
 use structopt::StructOpt;
 
-pub fn default_404(req: HttpRequest) -> Result<web::Json<()>, ActixError> {
+pub async fn default_404(req: HttpRequest) -> Result<web::Json<()>, ActixError> {
     Err(ActixError::RouteNotFound(req.path().to_string()))
 }
 
@@ -44,7 +44,7 @@ pub fn configure_server(cfg: &mut web::ServiceConfig) {
     );
 }
 
-pub fn runserver() -> Result<(), String> {
+pub async fn runserver() -> Result<(), String> {
     let args = Args::from_args();
     let ctx: Context = (&args).try_into()?;
     let prometheus = crate::prometheus_middleware::PrometheusMetrics::new("bragi", "/metrics");
@@ -52,7 +52,7 @@ pub fn runserver() -> Result<(), String> {
         App::new()
             .data(ctx.clone())
             // NOTE: if some middlewares are added, don't forget to add them in the tests too (in BragiHandler::new)
-            .wrap(actix_cors::Cors::new().allowed_methods(vec!["GET"]))
+            // .wrap(actix_cors::Cors::new().allowed_methods(vec!["GET"])) // TODO: is this deprecated?
             .wrap(prometheus.clone())
             .wrap(middleware::Logger::default())
             .configure(configure_server)
@@ -62,5 +62,6 @@ pub fn runserver() -> Result<(), String> {
     .map_err(|e| format!("Failed to bind `{}`: {}", args.bind, e))?
     .workers(args.nb_threads)
     .run()
+    .await
     .map_err(|e| format!("run failed: {}", e))
 }

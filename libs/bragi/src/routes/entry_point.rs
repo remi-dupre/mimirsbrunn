@@ -7,7 +7,7 @@ pub struct EndPoint {
     pub description: String,
 }
 
-pub fn entry_point() -> impl Responder {
+pub async fn entry_point() -> impl Responder {
     Json(EndPoint {
         description: "autocomplete service".to_owned(),
     })

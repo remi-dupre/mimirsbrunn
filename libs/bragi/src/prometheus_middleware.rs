@@ -10,11 +10,12 @@ use actix_web::{
     web::Bytes,
     Error,
 };
-use futures::future::{ok, FutureResult};
-use futures::{Async, Future, Poll};
 use prometheus::{self, Encoder, TextEncoder};
+use std::future::Future;
 use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::SystemTime;
 
 lazy_static::lazy_static! {
@@ -144,13 +145,13 @@ where
     type Error = Error;
     type InitError = ();
     type Transform = PrometheusMetricsMiddleware<S>;
-    type Future = FutureResult<Self::Transform, Self::InitError>;
+    type Future = crate::Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(PrometheusMetricsMiddleware {
+        crate::ready(Ok(PrometheusMetricsMiddleware {
             service,
             inner: Arc::new(self.clone()),
-        })
+        }))
     }
 }
 
@@ -172,8 +173,8 @@ where
     type Error = S::Error;
     type Future = MetricsResponse<S, B>;
 
-    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        self.service.poll_ready()
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
     }
 
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
@@ -204,20 +205,29 @@ where
     B: MessageBody,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 {
-    type Item = ServiceResponse<StreamLog<B>>;
-    type Error = Error;
+    type Output = Result<ServiceResponse<StreamLog<B>>, Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         HTTP_IN_FLIGHT.inc();
-        let res = futures::try_ready!(self.fut.poll());
+
+        let clock = self.clock;
+        let inner = self.inner.clone();
+
+        let res = match <S::Future as Future>::poll(
+            unsafe { self.map_unchecked_mut(|x| &mut x.fut) },
+            cx,
+        ) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+            Poll::Ready(Ok(val)) => val,
+        };
 
         let req = res.request();
-        let inner = self.inner.clone();
         let method = req.method().clone();
         let path = req.path().to_string();
         let handler = get_ressource_name(&path);
 
-        Ok(Async::Ready(res.map_body(move |mut head, mut body| {
+        Poll::Ready(Ok(res.map_body(move |mut head, mut body| {
             // We short circuit the response status and body to serve the endpoint
             // automagically. This way the user does not need to set the middleware *AND*
             // an endpoint to serve middleware results. The user is only required to set
@@ -233,7 +243,7 @@ where
             ResponseBody::Body(StreamLog {
                 body,
                 size: 0,
-                clock: self.clock,
+                clock,
                 inner,
                 status: head.status,
                 handler,
@@ -267,13 +277,15 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
         self.body.size()
     }
 
-    fn poll_next(&mut self) -> Poll<Option<Bytes>, Error> {
-        match self.body.poll_next()? {
-            Async::Ready(Some(chunk)) => {
-                self.size += chunk.len();
-                Ok(Async::Ready(Some(chunk)))
-            }
-            val => Ok(val),
+    fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
+        match self.body.poll_next(cx) {
+            Poll::Ready(val) => Poll::Ready(val.map(|chunk| {
+                if let Ok(chunk) = &chunk {
+                    self.size += chunk.len();
+                }
+                chunk
+            })),
+            Poll::Pending => Poll::Pending,
         }
     }
 }

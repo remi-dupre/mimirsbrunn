@@ -176,14 +176,14 @@ pub fn call_autocomplete(
         })
 }
 
-pub fn autocomplete(
+pub async fn autocomplete(
     params: BragiQuery<Params>,
     state: Data<Context>,
 ) -> Result<HttpResponse, model::BragiError> {
     call_autocomplete(&*params, &*state, None)
 }
 
-pub fn post_autocomplete(
+pub async fn post_autocomplete(
     params: BragiQuery<Params>,
     state: Data<Context>,
     json_params: Json<JsonParams>,
