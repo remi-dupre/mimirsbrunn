@@ -46,6 +46,28 @@ pub fn configure_server(cfg: &mut web::ServiceConfig) {
 
 pub async fn runserver() -> Result<(), String> {
     let args = Args::from_args();
+
+    // --- proof elasticsearch works fine inside actix ---
+
+    use elasticsearch::{cat::CatIndicesParts, http::transport::Transport, Elasticsearch};
+
+    let transport =
+        Transport::single_node(&args.connection_string).expect("invalid connection string");
+    let client = Elasticsearch::new(transport);
+
+    let response = client
+        .cat()
+        .indices(CatIndicesParts::Index(&["*"]))
+        .send()
+        .await
+        .expect("failed sending");
+
+    let response_body = response.text().await.expect("failed reading request");
+
+    println!("ES result: {:?}", response_body);
+
+    // ---
+
     let ctx: Context = (&args).try_into()?;
     let prometheus = crate::prometheus_middleware::PrometheusMetrics::new("bragi", "/metrics");
     HttpServer::new(move || {
