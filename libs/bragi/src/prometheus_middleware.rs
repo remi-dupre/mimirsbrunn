@@ -11,8 +11,8 @@ use actix_web::{
     Error,
 };
 use prometheus::{self, Encoder, TextEncoder};
+use std::boxed::Box;
 use std::future::Future;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -171,85 +171,49 @@ where
     type Request = ServiceRequest;
     type Response = ServiceResponse<StreamLog<B>>;
     type Error = S::Error;
-    type Future = MetricsResponse<S, B>;
+    type Future = Pin<Box<dyn Future<Output = Result<ServiceResponse<StreamLog<B>>, Error>>>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
     }
 
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
-        let clock = SystemTime::now();
-        MetricsResponse {
-            fut: self.service.call(req),
-            clock,
-            inner: self.inner.clone(),
-            _t: PhantomData,
-        }
-    }
-}
-
-#[doc(hidden)]
-pub struct MetricsResponse<S, B>
-where
-    B: MessageBody,
-    S: Service,
-{
-    fut: S::Future,
-    clock: SystemTime,
-    inner: Arc<PrometheusMetrics>,
-    _t: PhantomData<(B,)>,
-}
-
-impl<S, B> Future for MetricsResponse<S, B>
-where
-    B: MessageBody,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-{
-    type Output = Result<ServiceResponse<StreamLog<B>>, Error>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        HTTP_IN_FLIGHT.inc();
-
-        let clock = self.clock;
         let inner = self.inner.clone();
+        let service_fut = self.service.call(req);
 
-        let res = match <S::Future as Future>::poll(
-            unsafe { self.map_unchecked_mut(|x| &mut x.fut) },
-            cx,
-        ) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            Poll::Ready(Ok(val)) => val,
-        };
+        Box::pin(async move {
+            let res = service_fut.await?;
+            let req = res.request();
+            let method = req.method().clone();
+            let path = req.path().to_string();
+            let handler = get_ressource_name(&path);
+            let clock = SystemTime::now();
 
-        let req = res.request();
-        let method = req.method().clone();
-        let path = req.path().to_string();
-        let handler = get_ressource_name(&path);
+            Ok(res.map_body(move |mut head, mut body| {
+                // We short circuit the response status and body to serve the endpoint
+                // automagically. This way the user does not need to set the middleware *AND*
+                // an endpoint to serve middleware results. The user is only required to set
+                // the middleware and tell us what the endpoint should be.
+                if inner.matches(&path, &method) {
+                    head.status = StatusCode::OK;
+                    head.headers.insert(
+                        header::CONTENT_TYPE,
+                        header::HeaderValue::from_static("text/plain; charset=utf-8"),
+                    );
+                    body = ResponseBody::Other(Body::from_message(inner.metrics()));
+                }
 
-        Poll::Ready(Ok(res.map_body(move |mut head, mut body| {
-            // We short circuit the response status and body to serve the endpoint
-            // automagically. This way the user does not need to set the middleware *AND*
-            // an endpoint to serve middleware results. The user is only required to set
-            // the middleware and tell us what the endpoint should be.
-            if inner.matches(&path, &method) {
-                head.status = StatusCode::OK;
-                head.headers.insert(
-                    header::CONTENT_TYPE,
-                    header::HeaderValue::from_static("text/plain; charset=utf-8"),
-                );
-                body = ResponseBody::Other(Body::from_message(inner.metrics()));
-            }
-            ResponseBody::Body(StreamLog {
-                body,
-                size: 0,
-                clock,
-                inner,
-                status: head.status,
-                handler,
-                method,
-            })
-        })))
+                ResponseBody::Body(StreamLog {
+                    body,
+                    size: 0,
+                    clock,
+                    inner,
+                    status: head.status,
+                    handler,
+                    method,
+                })
+            }))
+        })
     }
 }
 
