@@ -10,6 +10,7 @@ use actix_web::{
     web::Bytes,
     Error,
 };
+use futures::future::{ok, Ready};
 use prometheus::{self, Encoder, TextEncoder};
 use std::boxed::Box;
 use std::future::Future;
@@ -145,13 +146,13 @@ where
     type Error = Error;
     type InitError = ();
     type Transform = PrometheusMetricsMiddleware<S>;
-    type Future = crate::Ready<Result<Self::Transform, Self::InitError>>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        crate::ready(Ok(PrometheusMetricsMiddleware {
+        ok(PrometheusMetricsMiddleware {
             service,
             inner: Arc::new(self.clone()),
-        }))
+        })
     }
 }
 

@@ -50,34 +50,6 @@ pub mod server;
 pub use query::make_place as query_make_place;
 pub use query_settings::QuerySettings;
 
-// ----
-// TODO: move this in utils
-// NOTE: waiting for stabilisation of std::future::Ready
-//       https://github.com/rust-lang/rust/pull/70834
-
-use std::future::Future;
-use std::pin::Pin;
-use std::task::Poll;
-
-#[derive(Debug, Clone)]
-pub struct Ready<T>(Option<T>);
-
-impl<T> Unpin for Ready<T> {}
-
-impl<T> Future for Ready<T> {
-    type Output = T;
-
-    fn poll(mut self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<T> {
-        Poll::Ready(self.0.take().expect("Ready polled after completion"))
-    }
-}
-
-pub fn ready<T>(x: T) -> Ready<T> {
-    Ready(Some(x))
-}
-
-// ----
-
 lazy_static::lazy_static! {
     static ref BRAGI_NB_THREADS: String = (8 * ::num_cpus::get()).to_string();
 }

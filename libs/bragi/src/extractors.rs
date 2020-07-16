@@ -8,6 +8,7 @@
 use crate::model::ApiError;
 use actix_web::{dev::Payload, FromRequest, HttpRequest};
 use failure::Fail;
+use futures::future::{ready, Ready};
 use std::ops::{Deref, DerefMut};
 
 #[derive(Fail, Debug)]
@@ -62,13 +63,13 @@ where
     T: serde::de::DeserializeOwned,
 {
     type Error = ActixError;
-    type Future = crate::Ready<Result<Self, ActixError>>;
+    type Future = Ready<Result<Self, ActixError>>;
     type Config = ();
 
     #[inline]
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         // Note: we need a non strict serde_qs to be able to parse the %5B / %5D as '[' / ']'
-        crate::ready(
+        ready(
             serde_qs::Config::new(5, false)
                 .deserialize_str(req.query_string())
                 .map_err(|e| ActixError::InvalidQueryParam(format!("{}", e)))

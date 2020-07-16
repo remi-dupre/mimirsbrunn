@@ -25,7 +25,7 @@ actix-cors = "0.2"
 actix-http = "1.0"
 actix-service = "1.0"
 serde_qs = "0.5"
-futures = "0.1"
+futures = "0.3"
 mimir = { path = "../mimir" }
 toml = "0.5.6"
 elasticsearch = "7.8.0-alpha.1"
