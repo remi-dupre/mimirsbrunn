@@ -62,3 +62,7 @@ json = "0.12"
 # we just call one test method: cf. tests::all_tests()
 [[test]]
 name = "tests"
+
+[patch.crates-io]
+geo = { git = "https://github.com/georust/geo.git" }
+geo-types = { git = "https://github.com/georust/geo.git" }

@@ -29,13 +29,13 @@
 // www.navitia.io
 
 use geo::algorithm::{
-    bounding_rect::BoundingRect, contains::Contains, euclidean_distance::EuclideanDistance,
+    bounding_rect::BoundingRect, euclidean_distance::EuclideanDistance, intersects::Intersects,
 };
 use geo_types::{MultiPolygon, Point};
 use mimir::Admin;
 use rstar::{Envelope, PointDistance, RTree, RTreeObject, SelectionFunction, AABB};
 use slog_scope::{info, warn};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::iter::FromIterator;
 use std::sync::Arc;
 
@@ -94,7 +94,7 @@ impl PointDistance for SplitAdmin {
     // the geo algorithms for performance, as suggested in rstar documentation.
     fn contains_point(&self, point: &[f64; 2]) -> bool {
         let p = Point::new(point[0], point[1]);
-        self.boundary.contains(&p)
+        self.boundary.intersects(&p)
     }
 }
 
@@ -103,7 +103,7 @@ impl PointDistance for SplitAdmin {
 // Using an id
 pub struct AdminGeoFinder {
     rtree: RTree<SplitAdmin>,
-    admin_by_id: BTreeMap<String, Arc<Admin>>,
+    admin_by_id: HashMap<String, Arc<Admin>>,
 }
 
 impl AdminGeoFinder {
@@ -134,6 +134,49 @@ impl AdminGeoFinder {
         }
     }
 
+    // Get a list of admins with their parents that overlap the given coordinates
+    pub fn get_all(&self, coord: &geo_types::Coordinate<f64>) -> Vec<Vec<Arc<Admin>>> {
+        // Get a list of overlapping admins...
+        let mut candidates = self
+            .rtree
+            .locate_with_selection_function(PointInEnvelopeSelectionFunction {
+                point: [coord.x, coord.y],
+            })
+            .collect::<Vec<_>>();
+
+        let mut visited: HashSet<&str> = HashSet::new();
+        candidates.sort_by_key(|cand| cand.admin.zone_type);
+        candidates
+            .into_iter()
+            .filter_map(move |cand| {
+                let admin = cand.admin.clone();
+                let bound = &cand.boundary;
+
+                if !visited.contains(admin.id.as_str())
+                    && bound.intersects(&geo_types::Point(*coord))
+                {
+                    let mut res = vec![admin];
+
+                    while let Some(parent) = res
+                        .last()
+                        .unwrap()
+                        .parent_id
+                        .as_ref()
+                        .and_then(|parent_id| self.admin_by_id.get(parent_id.as_str()))
+                    {
+                        visited.insert(parent.id.as_str());
+                        res.push(parent.clone());
+                    }
+
+                    res.reverse();
+                    Some(res)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     // Get all Admins overlapping the given coordinates.
     // Finding if a point is within a complex boundary, such as a multipolygon, is
     // expensive, compared to finding if it is in the envelope of the boundary.
@@ -145,6 +188,10 @@ impl AdminGeoFinder {
     // (2) We then iterate through these candidates and see if we already have the
     //     hierarchy which may have been previlously computed by eg. cosmogony.
     pub fn get(&self, coord: &geo_types::Coordinate<f64>) -> Vec<Arc<Admin>> {
+        // match self.new_get(*coord).as_slice() {
+        //     [val] => val.clone(),
+        //     other => panic!("complex admin result: {:#?}", other),
+        // }
         let selection_function = PointInEnvelopeSelectionFunction {
             point: [coord.x, coord.y],
         };
@@ -172,7 +219,7 @@ impl AdminGeoFinder {
                 .map_or(false, |zt| added_zone_types.contains(zt))
             {
                 // we don't want it, we already have this kind of ZoneType
-            } else if boundary.contains(&geo_types::Point(*coord)) {
+            } else if boundary.intersects(&geo_types::Point(*coord)) {
                 // we found a valid admin, we save it's hierarchy not to have to test their boundaries
                 if let Some(zt) = admin.zone_type {
                     added_zone_types.insert(zt);
@@ -213,7 +260,7 @@ impl Default for AdminGeoFinder {
     fn default() -> Self {
         AdminGeoFinder {
             rtree: RTree::new(),
-            admin_by_id: BTreeMap::new(),
+            admin_by_id: HashMap::new(),
         }
     }
 }
