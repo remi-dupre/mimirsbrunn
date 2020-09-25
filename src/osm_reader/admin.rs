@@ -35,17 +35,17 @@ use geo::bounding_rect::BoundingRect;
 use itertools::Itertools;
 use osm_boundaries_utils::build_boundary;
 use slog_scope::{info, warn};
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 pub type StreetsVec = Vec<mimir::Street>;
 
 #[derive(Debug)]
 pub struct AdminMatcher {
-    admin_levels: BTreeSet<u32>,
+    admin_levels: HashSet<u32>,
 }
 
 impl AdminMatcher {
-    pub fn new(levels: BTreeSet<u32>) -> AdminMatcher {
+    pub fn new(levels: HashSet<u32>) -> AdminMatcher {
         AdminMatcher {
             admin_levels: levels,
         }
@@ -68,11 +68,11 @@ impl AdminMatcher {
 
 pub fn read_administrative_regions(
     pbf: &mut OsmPbfReader,
-    levels: BTreeSet<u32>,
+    levels: HashSet<u32>,
     city_level: u32,
 ) -> Vec<mimir::Admin> {
     let mut administrative_regions = Vec::<mimir::Admin>::new();
-    let mut insee_inserted = BTreeSet::default();
+    let mut insee_inserted = HashSet::new();
     let matcher = AdminMatcher::new(levels);
     info!("reading pbf...");
     let objects = pbf.get_objs_and_deps(|o| matcher.is_admin(o)).unwrap();

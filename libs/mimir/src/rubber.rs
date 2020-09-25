@@ -42,7 +42,7 @@ use rs_es::units as rs_u;
 use rs_es::units::Duration;
 use rs_es::EsResponse;
 use slog_scope::{debug, info, warn};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::time;
 
@@ -361,7 +361,7 @@ impl Rubber {
     ) -> Result<TypedIndex<T>, Error> {
         let index_name = get_date_index_name(&get_main_type_and_dataset_index::<T>(dataset));
         info!("creating index {}", index_name);
-        self.create_index(&index_name.to_string(), index_settings)?;
+        self.create_index(&index_name, index_settings)?;
         Ok(TypedIndex::new(index_name))
     }
 
@@ -454,7 +454,7 @@ impl Rubber {
     pub fn get_all_aliased_index(
         &self,
         base_index: &str,
-    ) -> Result<BTreeMap<String, Vec<String>>, Error> {
+    ) -> Result<HashMap<String, Vec<String>>, Error> {
         let res = self
             .get(&format!("{}_*/_aliases", base_index))
             .with_context(|_| format!("Error occurred when getting {}*/_aliases", base_index))?;
@@ -475,12 +475,12 @@ impl Rubber {
                     })
                     .unwrap_or_else(|| {
                         info!("no aliases for {}", base_index);
-                        BTreeMap::new()
+                        HashMap::new()
                     }))
             }
             StatusCode::NOT_FOUND => {
                 info!("impossible to find alias {}", base_index);
-                Ok(BTreeMap::new())
+                Ok(HashMap::new())
             }
             _ => Err(format_err!("invalid elasticsearch response: {:?}", res)),
         }

@@ -62,3 +62,6 @@ json = "0.12"
 # we just call one test method: cf. tests::all_tests()
 [[test]]
 name = "tests"
+
+[patch.crates-io]
+cosmogony = { git = "https://github.com/remi-dupre/cosmogony.git", branch = "hash-impl" }

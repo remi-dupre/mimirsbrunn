@@ -50,7 +50,8 @@ use std::fs;
 use std::collections::HashMap;
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -297,7 +298,7 @@ impl<'a> Drop for DB<'a> {
 pub type AdminSet = BTreeSet<Arc<mimir::Admin>>;
 pub type NameAdminMap = BTreeMap<StreetKey, Vec<osmpbfreader::OsmId>>;
 pub type StreetsVec = Vec<mimir::Street>;
-pub type StreetWithRelationSet = BTreeSet<osmpbfreader::OsmId>;
+pub type StreetWithRelationSet = HashSet<osmpbfreader::OsmId>;
 
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct StreetKey {
@@ -307,13 +308,13 @@ pub struct StreetKey {
 
 #[cfg(feature = "db-storage")]
 pub enum ObjWrapper<'a> {
-    Map(BTreeMap<osmpbfreader::OsmId, osmpbfreader::OsmObj>),
+    Map(HashMap<osmpbfreader::OsmId, osmpbfreader::OsmObj>),
     DB(DB<'a>),
 }
 
 #[cfg(not(feature = "db-storage"))]
 pub enum ObjWrapper {
-    Map(BTreeMap<osmpbfreader::OsmId, osmpbfreader::OsmObj>),
+    Map(HashMap<osmpbfreader::OsmId, osmpbfreader::OsmObj>),
 }
 
 #[cfg(feature = "db-storage")]
@@ -326,8 +327,8 @@ impl<'a> ObjWrapper<'a> {
             info!("Running with DB storage");
             ObjWrapper::DB(DB::new(db_file, db_buffer_size).map_err(failure::err_msg)?)
         } else {
-            info!("Running with BTreeMap (RAM) storage");
-            ObjWrapper::Map(BTreeMap::new())
+            info!("Running with HashMap (RAM) storage");
+            ObjWrapper::Map(HashMap::new())
         })
     }
 
@@ -394,8 +395,8 @@ impl ObjWrapper {
                 "Unable to use DB Storage for OSM Store without feature turned on"
             ))
         } else {
-            info!("Running with BTreeMap (RAM) storage");
-            Ok(ObjWrapper::Map(BTreeMap::new()))
+            info!("Running with HashMap (RAM) storage");
+            Ok(ObjWrapper::Map(HashMap::new()))
         }
     }
 

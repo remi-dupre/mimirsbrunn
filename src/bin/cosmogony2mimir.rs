@@ -36,7 +36,6 @@ use mimirsbrunn::osm_reader::admin;
 use mimirsbrunn::osm_reader::osm_utils;
 use mimirsbrunn::utils;
 use slog_scope::{info, warn};
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use structopt::StructOpt;
@@ -44,7 +43,7 @@ use structopt::StructOpt;
 trait IntoAdmin {
     fn into_admin(
         self,
-        _: &BTreeMap<ZoneIndex, (String, Option<String>)>,
+        _: &HashMap<ZoneIndex, (String, Option<String>)>,
         langs: &[String],
         retrocompat_on_french_id: bool,
         max_weight: f64,
@@ -66,7 +65,7 @@ fn get_weight(tags: &osmpbfreader::Tags, center_tags: &osmpbfreader::Tags) -> f6
 impl IntoAdmin for Zone {
     fn into_admin(
         self,
-        zones_osm_id: &BTreeMap<ZoneIndex, (String, Option<String>)>,
+        zones_osm_id: &HashMap<ZoneIndex, (String, Option<String>)>,
         langs: &[String],
         french_id_retrocompatibility: bool,
         max_weight: f64,
@@ -169,14 +168,14 @@ fn index_cosmogony(args: Args) -> Result<(), Error> {
     info!("building maps");
     use cosmogony::ZoneType::City;
 
-    let mut cosmogony_id_to_osm_id = BTreeMap::new();
+    let mut cosmogony_id_to_osm_id = HashMap::new();
     let max_weight = utils::ADMIN_MAX_WEIGHT;
     for z in read_zones(&args.input)? {
         let insee = match z.zone_type {
             Some(City) => admin::read_insee(&z.tags).map(|s| s.to_owned()),
             _ => None,
         };
-        cosmogony_id_to_osm_id.insert(z.id.clone(), (z.osm_id.clone(), insee));
+        cosmogony_id_to_osm_id.insert(z.id, (z.osm_id.clone(), insee));
     }
     let cosmogony_id_to_osm_id = cosmogony_id_to_osm_id;
 

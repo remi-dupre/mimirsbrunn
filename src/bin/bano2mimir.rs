@@ -37,7 +37,7 @@ use mimirsbrunn::admin_geofinder::AdminGeoFinder;
 use mimirsbrunn::labels;
 use serde::{Deserialize, Serialize};
 use slog_scope::{info, warn};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs;
 use std::io::stdin;
 use std::ops::Deref;
@@ -45,7 +45,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use structopt::StructOpt;
 
-type AdminFromInsee = BTreeMap<String, Arc<Admin>>;
+type AdminFromInsee = HashMap<String, Arc<Admin>>;
 
 lazy_static! {
     static ref DEFAULT_NB_THREADS: String = num_cpus::get().to_string();
@@ -163,7 +163,7 @@ impl Bano {
             coord,
             approx_coord: Some(coord.into()),
             weight,
-            zip_codes: vec![self.zip.clone()],
+            zip_codes: vec![self.zip],
             distance: None,
             country_codes,
             context: None,

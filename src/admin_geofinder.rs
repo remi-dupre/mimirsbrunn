@@ -35,7 +35,7 @@ use geo_types::{MultiPolygon, Point};
 use mimir::Admin;
 use rstar::{Envelope, PointDistance, RTree, RTreeObject, SelectionFunction, AABB};
 use slog_scope::{info, warn};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::sync::Arc;
 
@@ -103,7 +103,7 @@ impl PointDistance for SplitAdmin {
 // Using an id
 pub struct AdminGeoFinder {
     rtree: RTree<SplitAdmin>,
-    admin_by_id: BTreeMap<String, Arc<Admin>>,
+    admin_by_id: HashMap<String, Arc<Admin>>,
 }
 
 impl AdminGeoFinder {
@@ -157,8 +157,8 @@ impl AdminGeoFinder {
         // We sort them so we can start with the smallest zone_type.
         candidates.sort_by_key(|adm| adm.admin.zone_type);
 
-        let mut tested_hierarchy = BTreeSet::<String>::new();
-        let mut added_zone_types = BTreeSet::new();
+        let mut tested_hierarchy = HashSet::<String>::new();
+        let mut added_zone_types = HashSet::new();
         let mut res = vec![];
 
         for candidate in candidates {
@@ -175,13 +175,13 @@ impl AdminGeoFinder {
             } else if boundary.contains(&geo_types::Point(*coord)) {
                 // we found a valid admin, we save it's hierarchy not to have to test their boundaries
                 if let Some(zt) = admin.zone_type {
-                    added_zone_types.insert(zt.clone());
+                    added_zone_types.insert(zt);
                 }
                 let mut admin_parent_id = admin.parent_id.clone();
                 while let Some(id) = admin_parent_id {
                     let admin_parent = self.admin_by_id.get(&id);
                     if let Some(zt) = admin_parent.as_ref().and_then(|a| a.zone_type) {
-                        added_zone_types.insert(zt.clone());
+                        added_zone_types.insert(zt);
                     }
                     if !tested_hierarchy.insert(id) {
                         break; // stop the exploration of the hierarchy since we have already added this one
@@ -213,7 +213,7 @@ impl Default for AdminGeoFinder {
     fn default() -> Self {
         AdminGeoFinder {
             rtree: RTree::new(),
-            admin_by_id: BTreeMap::new(),
+            admin_by_id: HashMap::new(),
         }
     }
 }

@@ -40,7 +40,7 @@ use crate::{labels, utils, Error};
 use failure::ResultExt;
 use osmpbfreader::StoreObjs;
 use slog_scope::info;
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -89,7 +89,7 @@ pub fn streets(
     pbf.get_objs_and_deps_store(is_valid_obj, &mut objs_map)
         .context("Error occurred when reading pbf")?;
     info!("reading pbf done.");
-    let mut street_rel: StreetWithRelationSet = BTreeSet::new();
+    let mut street_rel: StreetWithRelationSet = HashSet::new();
     let mut street_list: StreetsVec = vec![];
     // Sometimes, streets can be divided into several "way"s that still have the same street name.
     // The reason why a street is divided may be that a part of the street become
@@ -158,7 +158,7 @@ pub fn streets(
                     .collect();
                 name_admin_map
                     .entry(StreetKey { name, admins })
-                    .or_insert_with(|| vec![])
+                    .or_insert_with(Vec::new)
                     .push(osmid);
             }
         }

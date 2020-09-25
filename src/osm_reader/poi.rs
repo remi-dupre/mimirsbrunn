@@ -37,7 +37,7 @@ use mimir::{rubber, Poi, PoiType};
 use osm_boundaries_utils::build_boundary;
 use serde::{Deserialize, Serialize};
 use slog_scope::{info, warn};
-use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::error::Error;
 use std::io;
 use std::ops::Deref;
@@ -93,8 +93,7 @@ impl PoiConfig {
             })
     }
     pub fn check(&self) -> Result<(), Box<dyn Error>> {
-        use std::collections::BTreeSet;
-        let mut ids = BTreeSet::<&str>::new();
+        let mut ids = HashSet::<&str>::new();
         for poi_type in &self.poi_types {
             if !ids.insert(&poi_type.id) {
                 return Err(format!("poi_type_id {:?} present several times", poi_type.id).into());
@@ -199,7 +198,7 @@ fn make_properties(tags: &osmpbfreader::Tags) -> Vec<mimir::Property> {
 
 fn parse_poi(
     osmobj: &osmpbfreader::OsmObj,
-    obj_map: &BTreeMap<osmpbfreader::OsmId, osmpbfreader::OsmObj>,
+    obj_map: &std::collections::BTreeMap<osmpbfreader::OsmId, osmpbfreader::OsmObj>,
     matcher: &PoiConfig,
     admins_geofinder: &AdminGeoFinder,
 ) -> Option<mimir::Poi> {

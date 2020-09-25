@@ -34,7 +34,7 @@ use failure::format_err;
 use failure::{Error, ResultExt};
 use mimir::rubber::{IndexSettings, Rubber, TypedIndex};
 use slog_scope::{info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem::replace;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -148,13 +148,12 @@ fn attach_stops_to_admins<'a, It: Iterator<Item = &'a mut mimir::Stop>>(
         nb_matched + nb_unmatched
     );
 }
-fn merge_collection<T: Ord>(target: &mut Vec<T>, source: Vec<T>) {
-    use std::collections::BTreeSet;
+fn merge_collection<T: Eq + std::hash::Hash>(target: &mut Vec<T>, source: Vec<T>) {
     let tmp = replace(target, vec![]);
     *target = tmp
         .into_iter()
         .chain(source)
-        .collect::<BTreeSet<_>>()
+        .collect::<HashSet<_>>()
         .into_iter()
         .collect();
 }

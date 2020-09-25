@@ -35,7 +35,6 @@ use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use slog_scope::warn;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::fmt;
 use std::iter::FromIterator;
 use std::rc::Rc;
@@ -405,8 +404,8 @@ impl FromTransitModel<transit_model::objects::Line> for Line {
     }
 }
 
-#[derive(Default, Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct I18nProperties(pub Vec<Property>);
+#[derive(Default, Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize)]
+pub struct I18nProperties(#[serde(deserialize_with = "deserialize_properties")] pub Vec<Property>);
 
 impl serde::Serialize for I18nProperties {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -417,16 +416,35 @@ impl serde::Serialize for I18nProperties {
     }
 }
 
-impl<'de> Deserialize<'de> for I18nProperties {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let properties = BTreeMap::<String, String>::deserialize(deserializer)?
-            .into_iter()
-            .collect();
-        Ok(properties)
+fn deserialize_properties<'de, D>(deserializer: D) -> Result<Vec<Property>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct VecProperties;
+
+    impl<'de> Visitor<'de> for VecProperties {
+        type Value = Vec<Property>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an array")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut vec = Vec::new();
+
+            while let Some((key, value)) = map.next_entry::<String, String>()? {
+                vec.push(Property { key, value });
+            }
+
+            vec.sort_unstable_by(|a, b| a.key.cmp(&b.key));
+            Ok(vec)
+        }
     }
+
+    deserializer.deserialize_map(VecProperties)
 }
 
 impl FromIterator<(String, String)> for I18nProperties {
