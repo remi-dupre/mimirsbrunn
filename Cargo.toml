@@ -66,3 +66,4 @@ name = "tests"
 [patch.crates-io]
 geo = { git = "https://github.com/georust/geo.git" }
 geo-types = { git = "https://github.com/georust/geo.git" }
+cosmogony = { git = "https://github.com/remi-dupre/cosmogony.git", branch = "hash-impl" }

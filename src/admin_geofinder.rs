@@ -35,7 +35,7 @@ use geo_types::{MultiPolygon, Point};
 use mimir::Admin;
 use rstar::{Envelope, PointDistance, RTree, RTreeObject, SelectionFunction, AABB};
 use slog_scope::{info, warn};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::sync::Arc;
 
@@ -204,8 +204,8 @@ impl AdminGeoFinder {
         // We sort them so we can start with the smallest zone_type.
         candidates.sort_by_key(|adm| adm.admin.zone_type);
 
-        let mut tested_hierarchy = BTreeSet::<String>::new();
-        let mut added_zone_types = BTreeSet::new();
+        let mut tested_hierarchy = HashSet::<String>::new();
+        let mut added_zone_types = HashSet::new();
         let mut res = vec![];
 
         for candidate in candidates {

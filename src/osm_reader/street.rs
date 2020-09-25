@@ -40,14 +40,12 @@ use crate::{labels, utils, Error};
 use failure::ResultExt;
 use osmpbfreader::StoreObjs;
 use slog_scope::info;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, HashSet};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::osm_store::{
-    Getter, NameAdminMap, ObjWrapper, StreetKey, StreetWithRelationSet, StreetsVec,
-};
+use super::osm_store::{Getter, ObjWrapper};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(dead_code)]
@@ -57,12 +55,14 @@ pub enum Kind {
     Relation = 2,
 }
 
+// TODO: make sure the ID of a way / relation doesn't change between runs (sort by admins before
+//       numbering?)
 pub fn streets(
     pbf: &mut OsmPbfReader,
     admins_geofinder: &AdminGeoFinder,
     db_file: &Option<PathBuf>,
     db_buffer_size: usize,
-) -> Result<StreetsVec, Error> {
+) -> Result<Vec<mimir::Street>, Error> {
     // This is the list of highway that we don't want to index
     // See [OSM Key Highway](https://wiki.openstreetmap.org/wiki/Key:highway) for background.
     const INVALID_HIGHWAY: &[&str] =
@@ -89,130 +89,127 @@ pub fn streets(
     pbf.get_objs_and_deps_store(is_valid_obj, &mut objs_map)
         .context("Error occurred when reading pbf")?;
     info!("reading pbf done.");
-    let mut street_rel: StreetWithRelationSet = BTreeSet::new();
-    let mut street_list: StreetsVec = vec![];
+
+    // Builder for street object
+    let build_poi =
+        |id: String, name: String, coord: mimir::Coord, admins: Vec<Arc<mimir::Admin>>| {
+            let admins_iter = admins.iter().map(Deref::deref);
+            let country_codes = utils::find_country_codes(admins_iter.clone());
+            mimir::Street {
+                id,
+                label: labels::format_street_label(&name, admins_iter, &country_codes),
+                name,
+                weight: 0.,
+                zip_codes: utils::get_zip_codes_from_admins(&admins),
+                administrative_regions: admins,
+                coord,
+                approx_coord: Some(coord.into()),
+                distance: None,
+                country_codes,
+                context: None,
+            }
+        };
+
+    // List of outputed streets
+    let mut street_list = Vec::new();
+
     // Sometimes, streets can be divided into several "way"s that still have the same street name.
     // The reason why a street is divided may be that a part of the street become
     // a bridge/tunnel/etc. In this case, a "relation" tagged with (type = associatedStreet) is used
     // to group all these "way"s. In order not to have duplicates in autocompletion, we should tag
     // the osm ways in the relation not to index them twice.
+    let mut street_in_relation = HashSet::new();
 
     objs_map.for_each_filter(Kind::Relation, |obj| {
-        let rel = obj.relation().expect("impossible unwrap failure occured");
-        let way_name = rel.tags.get("name");
-        rel.refs
+        let rel = obj.relation().expect("invalid relation filter");
+        let rel_name = rel.tags.get("name").map(String::as_str);
+        let first_street = rel
+            .refs
             .iter()
             .filter(|ref_obj| ref_obj.member.is_way() && ref_obj.role == "street")
             .filter_map(|ref_obj| {
-                let objs_map = &objs_map;
                 let obj = objs_map.get(&ref_obj.member)?;
                 let way = obj.way()?;
-                let way_name = way_name.or_else(|| way.tags.get("name"))?;
+                let coord = get_way_coord(&objs_map, &way);
+                let name = rel_name
+                    .or_else(|| way.tags.get("name").map(String::as_str))
+                    .unwrap_or("");
+
+                // Add osmid of all the relation members in the set
+                // We don't create any street for all the osmid present in street_rel
+                street_in_relation.insert(ref_obj.member);
 
                 Some(
-                    get_street_admin(admins_geofinder, objs_map, &way)
+                    get_street_admin(admins_geofinder, &objs_map, &way)
                         .into_iter()
                         .enumerate()
-                        .map(move |(i, admins)| {
-                            let country_codes =
-                                utils::find_country_codes(admins.iter().map(|a| a.deref()));
-                            let street_label = labels::format_street_label(
-                                &way_name,
-                                admins.iter().map(|a| a.deref()),
-                                &country_codes,
-                            );
-                            let coord = get_way_coord(objs_map, &way);
-                            mimir::Street {
-                                id: format!("street:osm:relation:{}-{}", rel.id.0.to_string(), i),
-                                name: way_name.to_string(),
-                                label: street_label,
-                                weight: 0.,
-                                zip_codes: utils::get_zip_codes_from_admins(&admins),
-                                administrative_regions: admins,
-                                coord: get_way_coord(objs_map, &way),
-                                approx_coord: Some(coord.into()),
-                                distance: None,
-                                country_codes,
-                                context: None,
-                            }
+                        .map(|(i, admins)| {
+                            build_poi(
+                                format!("street:osm:relation{}-{}", rel.id.0, i),
+                                name.to_string(),
+                                coord,
+                                admins,
+                            )
                         })
                         .collect::<Vec<_>>(),
                 )
             })
-            .next()
-            .map(|street| street.into_iter().for_each(|s| street_list.push(s)));
+            .next();
 
-        // Add osmid of all the relation members in the set
-        // We don't create any street for all the osmid present in street_rel
-        for ref_obj in &rel.refs {
-            if ref_obj.member.is_way() {
-                street_rel.insert(ref_obj.member);
-            }
+        if let Some(street) = first_street {
+            street_list.extend(street.into_iter());
         }
     });
 
-    // we merge all the ways with a key = way_name + admin list of level(=city_level)
-    // we use a map NameAdminMap <key, value> to manage the merging of ways
-    let mut name_admin_map = NameAdminMap::default();
+    // We merge all the ways with same `way_name` and `admin list of level(=city_level)`
+    // We use a Map to keep track of the way of smallest Id for a given pair of "name + cities list"
+    let mut name_admin_map = BTreeMap::new();
+
     objs_map.for_each_filter(Kind::Way, |obj| {
         let osmid = obj.id();
+        let way = obj.way().expect("invalid way filter");
 
-        if street_rel.contains(&osmid) {
+        if street_in_relation.contains(&osmid) {
             return;
         }
 
-        if let Some(way) = obj.way() {
-            if let Some(name) = way.tags.get("name") {
-                for admins in get_street_admin(admins_geofinder, &objs_map, way) {
-                    let name = name.to_string();
-                    let admins = admins.into_iter().filter(|admin| admin.is_city()).collect();
-
-                    name_admin_map
-                        .entry(StreetKey { name, admins })
-                        .or_insert_with(Vec::new)
-                        .push(osmid);
-                }
+        if let Some(name) = way.tags.get("name") {
+            for admins in get_street_admin(admins_geofinder, &objs_map, way) {
+                let cities: Vec<_> = admins.into_iter().filter(|admin| admin.is_city()).collect();
+                name_admin_map
+                    .entry((name.to_string(), cities))
+                    .and_modify(|stored| *stored = std::cmp::min(*stored, osmid))
+                    .or_insert(osmid);
             }
         }
     });
 
     // Create a street for each way with osmid present in objs_map
-    let streets = name_admin_map
-        .values()
-        .filter_map(|way_ids| {
-            let min_id = way_ids.iter().min()?;
-            let objs_map = &objs_map;
-            let obj = objs_map.get(&min_id)?.clone();
-            let way = obj.way()?.clone();
-            let name = way.tags.get("name")?.to_string();
-            let admins = get_street_admin(admins_geofinder, objs_map, &way);
+    street_list.extend(
+        name_admin_map
+            .values()
+            .filter_map(|min_id| {
+                let obj = objs_map.get(&min_id)?;
+                let way = obj.way()?.clone();
+                let coord = get_way_coord(&objs_map, &way);
+                let name = way.tags.get("name")?.to_string();
+                Some(
+                    get_street_admin(admins_geofinder, &objs_map, &way)
+                        .into_iter()
+                        .enumerate()
+                        .map(move |(i, admins)| {
+                            build_poi(
+                                format!("street:osm:way:{}-{}", way.id.0, i),
+                                name.to_string(),
+                                coord,
+                                admins,
+                            )
+                        }),
+                )
+            })
+            .flatten(),
+    );
 
-            Some(admins.into_iter().map(move |admins| {
-                let country_codes = utils::find_country_codes(admins.iter().map(|a| a.deref()));
-                let street_label = labels::format_street_label(
-                    &name,
-                    admins.iter().map(|a| a.deref()),
-                    &country_codes,
-                );
-                let coord = get_way_coord(objs_map, &way);
-                mimir::Street {
-                    id: format!("street:osm:way:{}", way.id.0.to_string()),
-                    label: street_label,
-                    name: name.to_string(),
-                    weight: 0.,
-                    zip_codes: utils::get_zip_codes_from_admins(&admins),
-                    administrative_regions: admins,
-                    coord: get_way_coord(objs_map, &way),
-                    approx_coord: Some(coord.into()),
-                    distance: None,
-                    country_codes,
-                    context: None,
-                }
-            }))
-        })
-        .flatten();
-
-    street_list.extend(streets);
     Ok(street_list)
 }
 
@@ -241,7 +238,7 @@ fn get_street_admin<T: StoreObjs + Getter>(
         .map_or(vec![], |c| admins_geofinder.get_all(&c))
 }
 
-pub fn compute_street_weight(streets: &mut StreetsVec) {
+pub fn compute_street_weight(streets: &mut Vec<mimir::Street>) {
     for st in streets {
         for admin in &mut st.administrative_regions {
             if admin.is_city() {

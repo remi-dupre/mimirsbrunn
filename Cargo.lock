@@ -764,8 +764,7 @@ checksum = "b3a71ab494c0b5b860bdc8407ae08978052417070c2ced38573a9157ad75b8ac"
 [[package]]
 name = "cosmogony"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4e850a76a8e19abe94fde9f7db70b5ed598b5baa3f8eb4a01b48104b67d7cfd"
+source = "git+https://github.com/remi-dupre/cosmogony.git?branch=hash-impl#69f6815ada8e652f883b370f3896c12866d70ae3"
 dependencies = [
  "env_logger",
  "failure",
