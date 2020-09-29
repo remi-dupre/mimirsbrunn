@@ -30,7 +30,7 @@
 
 use failure::ResultExt;
 use mimir::rubber::{IndexSettings, Rubber};
-use mimirsbrunn::admin_geofinder::AdminGeoFinder;
+use mimirsbrunn::admin_geofinder::{AdminGeoFinder, CompareInclusive, CompareStrict};
 use mimirsbrunn::osm_reader::admin::read_administrative_regions;
 use mimirsbrunn::osm_reader::make_osm_reader;
 use mimirsbrunn::osm_reader::poi::{add_address, compute_poi_weight, pois, PoiConfig};
@@ -122,12 +122,21 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
     } else {
         rubber.get_all_admins()?
     };
-    let admins_geofinder = admins.into_iter().collect::<AdminGeoFinder>();
+
+    let admins_geofinder_inclusive = admins
+        .iter()
+        .cloned()
+        .collect::<AdminGeoFinder<CompareInclusive>>();
+
+    let admins_geofinder_strict = admins
+        .into_iter()
+        .collect::<AdminGeoFinder<CompareStrict>>();
+
     if args.import_way {
         info!("Extracting streets from osm");
         let mut streets = streets(
             &mut osm_reader,
-            &admins_geofinder,
+            &admins_geofinder_inclusive,
             &args.db_file,
             args.db_buffer_size,
         )?;
@@ -159,7 +168,7 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
             .public_index(
                 &args.dataset,
                 &admin_index_settings,
-                admins_geofinder.admins(),
+                admins_geofinder_strict.admins(),
             )
             .with_context(|_| {
                 format!(
@@ -181,7 +190,7 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
             }
         };
         info!("Extracting pois from osm");
-        let mut pois = pois(&mut osm_reader, &matcher, &admins_geofinder);
+        let mut pois = pois(&mut osm_reader, &matcher, &admins_geofinder_strict);
 
         info!("computing poi weight");
         compute_poi_weight(&mut pois);
