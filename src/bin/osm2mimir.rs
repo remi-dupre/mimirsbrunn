@@ -30,7 +30,7 @@
 
 use failure::ResultExt;
 use mimir::rubber::{IndexSettings, Rubber};
-use mimirsbrunn::admin_geofinder::{AdminGeoFinder, CompareInclusive, CompareStrict};
+use mimirsbrunn::admin_geofinder::AdminGeoFinder;
 use mimirsbrunn::osm_reader::admin::read_administrative_regions;
 use mimirsbrunn::osm_reader::make_osm_reader;
 use mimirsbrunn::osm_reader::poi::{add_address, compute_poi_weight, pois, PoiConfig};
@@ -123,20 +123,11 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
         rubber.get_all_admins()?
     };
 
-    let admins_geofinder_inclusive = admins
-        .iter()
-        .cloned()
-        .collect::<AdminGeoFinder<CompareInclusive>>();
-
-    let admins_geofinder_strict = admins
-        .into_iter()
-        .collect::<AdminGeoFinder<CompareStrict>>();
-
     if args.import_way {
         info!("Extracting streets from osm");
         let mut streets = streets(
             &mut osm_reader,
-            &admins_geofinder_inclusive,
+            &admins.iter().cloned().collect(),
             &args.db_file,
             args.db_buffer_size,
         )?;
@@ -159,6 +150,10 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
             })?;
         info!("Nb of indexed street: {}", nb_streets);
     }
+
+    // Geofinder with strict inclusion rules
+    let admins_geofinder: AdminGeoFinder<_> = admins.into_iter().collect();
+
     if args.import_admin {
         let admin_index_settings = IndexSettings {
             nb_shards: args.nb_admin_shards,
@@ -168,7 +163,7 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
             .public_index(
                 &args.dataset,
                 &admin_index_settings,
-                admins_geofinder_strict.admins(),
+                admins_geofinder.admins(),
             )
             .with_context(|_| {
                 format!(
@@ -190,7 +185,7 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
             }
         };
         info!("Extracting pois from osm");
-        let mut pois = pois(&mut osm_reader, &matcher, &admins_geofinder_strict);
+        let mut pois = pois(&mut osm_reader, &matcher, &admins_geofinder);
 
         info!("computing poi weight");
         compute_poi_weight(&mut pois);

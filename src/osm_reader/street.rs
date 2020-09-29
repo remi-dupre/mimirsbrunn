@@ -55,8 +55,6 @@ pub enum Kind {
     Relation = 2,
 }
 
-// TODO: make sure the ID of a way / relation doesn't change between runs (sort by admins before
-//       numbering?)
 pub fn streets(
     pbf: &mut OsmPbfReader,
     admins_geofinder: &AdminGeoFinder<CompareInclusive>,
@@ -110,6 +108,23 @@ pub fn streets(
             }
         };
 
+    // Return an iterator giving documents that will be inserted for a given street: one for each
+    // hierarchy of admins
+    let pois_with_admin = move |name: String, id, kind, mut admins: Vec<Vec<_>>, coord| {
+        admins.sort_unstable(); // sort admins to make id deterministic
+        admins.into_iter().enumerate().map(move |(i, admins)| {
+            let doc_id = {
+                if admins.len() <= 1 {
+                    format!("street:osm:{}:{}", kind, id)
+                } else {
+                    format!("street:osm:{}:{}-{}", kind, id, i)
+                }
+            };
+
+            build_poi(doc_id, name.clone(), coord, admins)
+        })
+    };
+
     // List of outputed streets
     let mut street_list = Vec::new();
 
@@ -139,25 +154,18 @@ pub fn streets(
                 // We don't create any street for all the osmid present in street_rel
                 street_in_relation.insert(ref_obj.member);
 
-                Some(
-                    get_street_admin(admins_geofinder, &objs_map, &way)
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, admins)| {
-                            build_poi(
-                                format!("street:osm:relation{}-{}", rel.id.0, i),
-                                name.to_string(),
-                                coord,
-                                admins,
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
+                Some(pois_with_admin(
+                    name.to_string(),
+                    rel.id.0,
+                    "relation",
+                    get_street_admin(admins_geofinder, &objs_map, &way),
+                    coord,
+                ))
             })
             .next();
 
         if let Some(street) = first_street {
-            street_list.extend(street.into_iter());
+            street_list.extend(street);
         }
     });
 
@@ -191,21 +199,14 @@ pub fn streets(
             .filter_map(|min_id| {
                 let obj = objs_map.get(&min_id)?;
                 let way = obj.way()?.clone();
-                let coord = get_way_coord(&objs_map, &way);
-                let name = way.tags.get("name")?.to_string();
-                Some(
-                    get_street_admin(admins_geofinder, &objs_map, &way)
-                        .into_iter()
-                        .enumerate()
-                        .map(move |(i, admins)| {
-                            build_poi(
-                                format!("street:osm:way:{}-{}", way.id.0, i),
-                                name.to_string(),
-                                coord,
-                                admins,
-                            )
-                        }),
-                )
+
+                Some(pois_with_admin(
+                    way.tags.get("name")?.to_string(),
+                    way.id.0,
+                    "way",
+                    get_street_admin(admins_geofinder, &objs_map, &way),
+                    get_way_coord(&objs_map, &way),
+                ))
             })
             .flatten(),
     );

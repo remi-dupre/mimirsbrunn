@@ -223,10 +223,6 @@ impl<C: Comparison> AdminGeoFinder<C> {
     // (2) We then iterate through these candidates and see if we already have the
     //     hierarchy which may have been previlously computed by eg. cosmogony.
     pub fn get(&self, coord: &geo_types::Coordinate<f64>) -> Vec<Arc<Admin>> {
-        // match self.new_get(*coord).as_slice() {
-        //     [val] => val.clone(),
-        //     other => panic!("complex admin result: {:#?}", other),
-        // }
         let selection_function = PointInEnvelopeSelectionFunction {
             point: [coord.x, coord.y],
         };
@@ -239,7 +235,7 @@ impl<C: Comparison> AdminGeoFinder<C> {
         // We sort them so we can start with the smallest zone_type.
         candidates.sort_by_key(|adm| adm.admin.zone_type);
 
-        let mut tested_hierarchy = HashSet::<String>::new();
+        let mut tested_hierarchy = HashSet::new();
         let mut added_zone_types = HashSet::new();
         let mut res = vec![];
 
