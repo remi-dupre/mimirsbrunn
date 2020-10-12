@@ -553,7 +553,7 @@ dependencies = [
  "docker_wrapper",
  "failure",
  "futures",
- "geo-types 0.6.0",
+ "geo-types 0.6.1",
  "geojson",
  "git-version",
  "heck",
@@ -763,15 +763,16 @@ checksum = "b3a71ab494c0b5b860bdc8407ae08978052417070c2ced38573a9157ad75b8ac"
 
 [[package]]
 name = "cosmogony"
-version = "0.8.0"
-source = "git+https://github.com/remi-dupre/cosmogony.git?branch=hash-impl#69f6815ada8e652f883b370f3896c12866d70ae3"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1e092bc2a0dfa9076c131c4dd1fb857c2077dc5ecb630cd108ec659500264a8"
 dependencies = [
  "env_logger",
  "failure",
  "failure_derive",
  "flate2",
  "geo 0.14.2",
- "geo-types 0.6.0",
+ "geo-types 0.6.1",
  "geojson",
  "log",
  "osmpbfreader",
@@ -1296,9 +1297,22 @@ dependencies = [
 [[package]]
 name = "geo"
 version = "0.14.2"
-source = "git+https://github.com/georust/geo.git#9dfb6fa3e794aa9becdaceb5c83b0bc05a311e81"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "139007e3210dfc1d010e166e779059be5e0f31967a71f3edae97116aefb74450"
 dependencies = [
- "geo-types 0.6.0",
+ "geo-types 0.6.1",
+ "geographiclib-rs",
+ "num-traits",
+ "rstar 0.8.2",
+]
+
+[[package]]
+name = "geo"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1488b04daa30b25f0beb19c2110fa507484ac8c2b8cad83d548cdda857f7f7a"
+dependencies = [
+ "geo-types 0.6.1",
  "geographiclib-rs",
  "num-traits",
  "robust",
@@ -1317,8 +1331,9 @@ dependencies = [
 
 [[package]]
 name = "geo-types"
-version = "0.6.0"
-source = "git+https://github.com/georust/geo.git#9dfb6fa3e794aa9becdaceb5c83b0bc05a311e81"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd0e91cb835a9b740d38fc45efdf6392bedd20101f1e7419e464cd54f61373a1"
 dependencies = [
  "approx",
  "num-traits",
@@ -1340,7 +1355,7 @@ version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da98686bca3298df46f3957c78166cfbf0fa399e9efcdac0cb7ff2cfed1fd2ab"
 dependencies = [
- "geo-types 0.6.0",
+ "geo-types 0.6.1",
  "num-traits",
  "serde",
  "serde_json",
@@ -1883,8 +1898,8 @@ dependencies = [
  "chrono",
  "cosmogony",
  "failure",
- "geo 0.14.2",
- "geo-types 0.6.0",
+ "geo 0.15.0",
+ "geo-types 0.6.1",
  "geojson",
  "human-sort",
  "lazy_static",
@@ -1923,8 +1938,8 @@ dependencies = [
  "docker_wrapper",
  "failure",
  "flate2",
- "geo 0.14.2",
- "geo-types 0.6.0",
+ "geo 0.15.0",
+ "geo-types 0.6.1",
  "human-sort",
  "itertools 0.9.0",
  "json",
@@ -2192,7 +2207,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07dcd9a020f059e9f3c671091e80a6205a9ef24c89468887a7b26b6805f48c3e"
 dependencies = [
  "geo 0.14.2",
- "geo-types 0.6.0",
+ "geo-types 0.6.1",
  "log",
  "osmpbfreader",
 ]
