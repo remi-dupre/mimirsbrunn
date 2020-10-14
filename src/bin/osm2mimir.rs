@@ -152,7 +152,7 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
     }
 
     // Geofinder with strict inclusion rules
-    let admins_geofinder: AdminGeoFinder<_> = admins.into_iter().collect();
+    let admins_geofinder: AdminGeoFinder = admins.into_iter().collect();
 
     if args.import_admin {
         let admin_index_settings = IndexSettings {

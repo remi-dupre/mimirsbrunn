@@ -31,7 +31,7 @@
 use super::osm_utils::get_way_coord;
 use super::osm_utils::make_centroid;
 use super::OsmPbfReader;
-use crate::admin_geofinder::{AdminGeoFinder, CompareStrict};
+use crate::admin_geofinder::AdminGeoFinder;
 use crate::{labels, utils};
 use mimir::{rubber, Poi, PoiType};
 use osm_boundaries_utils::build_boundary;
@@ -201,7 +201,7 @@ fn parse_poi(
     osmobj: &osmpbfreader::OsmObj,
     obj_map: &BTreeMap<osmpbfreader::OsmId, osmpbfreader::OsmObj>,
     matcher: &PoiConfig,
-    admins_geofinder: &AdminGeoFinder<CompareStrict>,
+    admins_geofinder: &AdminGeoFinder,
 ) -> Option<mimir::Poi> {
     let poi_type = match matcher.get_poi_type(osmobj.tags()) {
         Some(poi_type) => poi_type,
@@ -270,7 +270,7 @@ fn format_poi_id(osm_type: &str, id: i64) -> String {
 pub fn pois(
     pbf: &mut OsmPbfReader,
     matcher: &PoiConfig,
-    admins_geofinder: &AdminGeoFinder<CompareStrict>,
+    admins_geofinder: &AdminGeoFinder,
 ) -> Vec<Poi> {
     let objects = pbf.get_objs_and_deps(|o| matcher.is_poi(o.tags())).unwrap();
     objects

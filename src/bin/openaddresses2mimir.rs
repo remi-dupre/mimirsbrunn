@@ -31,7 +31,7 @@
 use lazy_static::lazy_static;
 use mimir::rubber::{IndexSettings, Rubber};
 use mimirsbrunn::addr_reader::{import_addresses_from_files, import_addresses_from_streams};
-use mimirsbrunn::admin_geofinder::{AdminGeoFinder, CompareStrict};
+use mimirsbrunn::admin_geofinder::AdminGeoFinder;
 use mimirsbrunn::{labels, utils};
 use serde::{Deserialize, Serialize};
 use slog_scope::{info, warn};
@@ -62,7 +62,7 @@ pub struct OpenAddress {
 impl OpenAddress {
     pub fn into_addr(
         self,
-        admins_geofinder: &AdminGeoFinder<CompareStrict>,
+        admins_geofinder: &AdminGeoFinder,
         use_old_index_format: bool,
         id_precision: usize,
     ) -> Result<mimir::Addr, mimirsbrunn::Error> {

@@ -38,39 +38,7 @@ use rstar::{Envelope, PointDistance, RTree, RTreeObject, SelectionFunction, AABB
 use slog_scope::{info, warn};
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
-use std::marker::PhantomData;
 use std::sync::Arc;
-
-// Type used as parameters to tweak how admin lookups are performed.
-//  - CompareStrict: will search fir admins in which given points belong to the inside
-//  - CompareInclusive: will search for admins in which given points belong to the inside or the
-//    border
-pub struct CompareInclusive;
-pub struct CompareStrict;
-
-pub trait Comparison {
-    fn compare<A, B>(geo1: &A, geo2: &B) -> bool
-    where
-        A: Intersects<B> + Contains<B>;
-}
-
-impl Comparison for CompareInclusive {
-    fn compare<A, B>(geo1: &A, geo2: &B) -> bool
-    where
-        A: Intersects<B> + Contains<B>,
-    {
-        geo1.intersects(geo2)
-    }
-}
-
-impl Comparison for CompareStrict {
-    fn compare<A, B>(geo1: &A, geo2: &B) -> bool
-    where
-        A: Intersects<B> + Contains<B>,
-    {
-        geo1.contains(geo2)
-    }
-}
 
 // This is a structure which is used in the RTree to customize the list of objects returned
 // when searching at a given location. This version just focuses on the envelope of the object,
@@ -99,15 +67,14 @@ where
 // This is the object stored in the RTree.
 // It splits the admin, taking the boundary in one field, and the rest as an Arc.
 // We store the envelope so we don't have to recompute it every time we query this bounded id
-pub struct SplitAdmin<C: Comparison> {
+pub struct SplitAdmin {
     pub envelope: AABB<[f64; 2]>,
     pub boundary: MultiPolygon<f64>,
     pub admin: Arc<Admin>,
-    _compare: PhantomData<C>,
 }
 
 // This trait is needed so that SplitAdmin can be inserted in the RTree
-impl<C: Comparison> RTreeObject for SplitAdmin<C> {
+impl RTreeObject for SplitAdmin {
     type Envelope = AABB<[f64; 2]>;
 
     fn envelope(&self) -> Self::Envelope {
@@ -115,7 +82,7 @@ impl<C: Comparison> RTreeObject for SplitAdmin<C> {
     }
 }
 
-impl<C: Comparison> PointDistance for SplitAdmin<C> {
+impl PointDistance for SplitAdmin {
     // This function computes the square of the distance from an Admin to a point.
     // We compute the distance from the boundary to a point.
     fn distance_2(&self, point: &[f64; 2]) -> f64 {
@@ -128,19 +95,19 @@ impl<C: Comparison> PointDistance for SplitAdmin<C> {
     // the geo algorithms for performance, as suggested in rstar documentation.
     fn contains_point(&self, point: &[f64; 2]) -> bool {
         let p = Point::new(point[0], point[1]);
-        C::compare(&self.boundary, &p)
+        self.boundary.contains(&p)
     }
 }
 
 // In the AdminGeoFinder, we need search for admins in two ways:
 // Geographically, so we'll use an RTree.
 // Using an id
-pub struct AdminGeoFinder<C: Comparison> {
-    rtree: RTree<SplitAdmin<C>>,
+pub struct AdminGeoFinder {
+    rtree: RTree<SplitAdmin>,
     admin_by_id: HashMap<String, Arc<Admin>>,
 }
 
-impl<C: Comparison> AdminGeoFinder<C> {
+impl AdminGeoFinder {
     pub fn insert(&mut self, admin: Admin) {
         let mut admin = admin;
         let boundary = std::mem::replace(&mut admin.boundary, None);
@@ -155,7 +122,6 @@ impl<C: Comparison> AdminGeoFinder<C> {
                         ),
                         boundary,
                         admin: admin.clone(),
-                        _compare: PhantomData::default(),
                     };
                     self.admin_by_id.insert(admin.id.clone(), admin);
                     self.rtree.insert(split);
@@ -250,7 +216,7 @@ impl<C: Comparison> AdminGeoFinder<C> {
                 .map_or(false, |zt| added_zone_types.contains(zt))
             {
                 // we don't want it, we already have this kind of ZoneType
-            } else if boundary.intersects(&geo_types::Point(*coord)) {
+            } else if boundary.contains(&geo_types::Point(*coord)) {
                 // we found a valid admin, we save it's hierarchy not to have to test their boundaries
                 if let Some(zt) = admin.zone_type {
                     added_zone_types.insert(zt);
@@ -287,7 +253,7 @@ impl<C: Comparison> AdminGeoFinder<C> {
     }
 }
 
-impl<C: Comparison> Default for AdminGeoFinder<C> {
+impl Default for AdminGeoFinder {
     fn default() -> Self {
         AdminGeoFinder {
             rtree: RTree::new(),
@@ -296,7 +262,7 @@ impl<C: Comparison> Default for AdminGeoFinder<C> {
     }
 }
 
-impl<C: Comparison> FromIterator<Admin> for AdminGeoFinder<C> {
+impl FromIterator<Admin> for AdminGeoFinder {
     fn from_iter<I: IntoIterator<Item = Admin>>(admins: I) -> Self {
         let mut geofinder = AdminGeoFinder::default();
 
@@ -368,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_two_fake_admins() {
-        let mut finder = AdminGeoFinder::<CompareStrict>::default();
+        let mut finder = AdminGeoFinder::default();
         finder.insert(make_admin(40., Some(ZoneType::City)));
         finder.insert(make_admin(43., Some(ZoneType::State)));
 
@@ -397,7 +363,7 @@ mod tests {
     fn test_two_admin_same_zone_type() {
         // a point can be associated to only 1 admin type
         // so a point is in 2 city, it is associated to only one
-        let mut finder = AdminGeoFinder::<CompareStrict>::default();
+        let mut finder = AdminGeoFinder::default();
         finder.insert(make_admin(40., Some(ZoneType::City)));
         finder.insert(make_admin(43., Some(ZoneType::City)));
         let admins = finder.get(&p(46., 46.).0);
@@ -409,7 +375,7 @@ mod tests {
         // a point can be associated to only 1 admin type
         // but a point can be associated to multiple admin without zone_type
         // (for retrocompatibility of the data imported without cosmogony)
-        let mut finder = AdminGeoFinder::<CompareStrict>::default();
+        let mut finder = AdminGeoFinder::default();
         finder.insert(make_admin(40., None));
         finder.insert(make_admin(43., None));
         let admins = finder.get(&p(46., 46.).0);
@@ -419,7 +385,7 @@ mod tests {
     #[test]
     fn test_hierarchy() {
         // In this test we use 3 admin regions that include each other.
-        let mut finder = AdminGeoFinder::<CompareStrict>::default();
+        let mut finder = AdminGeoFinder::default();
         finder.insert(make_complex_admin(
             "bob_city",
             40.,
@@ -451,7 +417,7 @@ mod tests {
 
     #[test]
     fn test_hierarchy_orphan() {
-        let mut finder = AdminGeoFinder::<CompareStrict>::default();
+        let mut finder = AdminGeoFinder::default();
         finder.insert(make_complex_admin(
             "bob_city",
             40.,
@@ -494,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_hierarchy_and_not_typed_zone() {
-        let mut finder = AdminGeoFinder::<CompareStrict>::default();
+        let mut finder = AdminGeoFinder::default();
         finder.insert(make_complex_admin(
             "bob_city",
             40.,

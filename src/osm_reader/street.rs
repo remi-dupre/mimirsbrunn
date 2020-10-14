@@ -35,7 +35,7 @@
 )]
 use super::osm_utils::get_way_coord;
 use super::OsmPbfReader;
-use crate::admin_geofinder::{AdminGeoFinder, CompareInclusive};
+use crate::admin_geofinder::AdminGeoFinder;
 use crate::{labels, utils, Error};
 use failure::ResultExt;
 use osmpbfreader::StoreObjs;
@@ -57,7 +57,7 @@ pub enum Kind {
 
 pub fn streets(
     pbf: &mut OsmPbfReader,
-    admins_geofinder: &AdminGeoFinder<CompareInclusive>,
+    admins_geofinder: &AdminGeoFinder,
     db_file: &Option<PathBuf>,
     db_buffer_size: usize,
 ) -> Result<Vec<mimir::Street>, Error> {
@@ -215,7 +215,7 @@ pub fn streets(
 }
 
 fn get_street_admin<T: StoreObjs + Getter>(
-    admins_geofinder: &AdminGeoFinder<CompareInclusive>,
+    admins_geofinder: &AdminGeoFinder,
     obj_map: &T,
     way: &osmpbfreader::objects::Way,
 ) -> Vec<Vec<Arc<mimir::Admin>>> {

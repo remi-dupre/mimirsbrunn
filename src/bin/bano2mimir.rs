@@ -33,7 +33,7 @@ use lazy_static::lazy_static;
 use mimir::objects::Admin;
 use mimir::rubber::{IndexSettings, Rubber};
 use mimirsbrunn::addr_reader::{import_addresses_from_files, import_addresses_from_streams};
-use mimirsbrunn::admin_geofinder::{AdminGeoFinder, CompareStrict};
+use mimirsbrunn::admin_geofinder::AdminGeoFinder;
 use mimirsbrunn::labels;
 use serde::{Deserialize, Serialize};
 use slog_scope::{info, warn};
@@ -75,7 +75,7 @@ impl Bano {
     pub fn into_addr(
         self,
         admins_from_insee: &AdminFromInsee,
-        admins_geofinder: &AdminGeoFinder<CompareStrict>,
+        admins_geofinder: &AdminGeoFinder,
         use_old_index_format: bool,
     ) -> Result<mimir::Addr, mimirsbrunn::Error> {
         let street_id = format!("street:{}", self.fantoir()?.to_string());

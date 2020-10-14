@@ -34,10 +34,7 @@ use failure::format_err;
 use lazy_static::lazy_static;
 use mimir::objects::{Coord, I18nProperties, Poi, PoiType, Property};
 use mimir::rubber::{IndexSettings, IndexVisibility, Rubber, TypedIndex};
-use mimirsbrunn::{
-    admin_geofinder::{AdminGeoFinder, CompareStrict},
-    labels, utils,
-};
+use mimirsbrunn::{admin_geofinder::AdminGeoFinder, labels, utils};
 use navitia_poi_model::{Model as NavitiaModel, Poi as NavitiaPoi, PoiType as NavitiaPoiType};
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -54,7 +51,7 @@ fn into_mimir_poi(
     poi: NavitiaPoi,
     poi_types: &HashMap<String, NavitiaPoiType>,
     rubber: &mut Rubber,
-    admins_geofinder: &AdminGeoFinder<CompareStrict>,
+    admins_geofinder: &AdminGeoFinder,
 ) -> Result<Poi, mimirsbrunn::Error> {
     let poi_type = poi_types
         .get(&poi.poi_type_id)
@@ -115,7 +112,7 @@ fn into_mimir_poi(
 fn import_pois(
     rubber: &mut Rubber,
     index: &TypedIndex<Poi>,
-    admins_geofinder: AdminGeoFinder<CompareStrict>,
+    admins_geofinder: AdminGeoFinder,
     file: &PathBuf,
 ) -> Result<(), mimirsbrunn::Error>
 where

@@ -28,7 +28,7 @@
 // https://groups.google.com/d/forum/navitia
 // www.navitia.io
 
-use crate::admin_geofinder::{AdminGeoFinder, CompareStrict};
+use crate::admin_geofinder::AdminGeoFinder;
 use crate::{labels, utils};
 use failure::format_err;
 use failure::{Error, ResultExt};
@@ -126,9 +126,7 @@ fn attach_stops_to_admins<'a, It: Iterator<Item = &'a mut mimir::Stop>>(
 
     info!("{} administrative regions loaded from mimir", admins.len());
 
-    let admins_geofinder = admins
-        .into_iter()
-        .collect::<AdminGeoFinder<CompareStrict>>();
+    let admins_geofinder = admins.into_iter().collect::<AdminGeoFinder>();
 
     let mut nb_unmatched = 0u32;
     let mut nb_matched = 0u32;
