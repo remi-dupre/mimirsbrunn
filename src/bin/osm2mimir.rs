@@ -122,12 +122,12 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
     } else {
         rubber.get_all_admins()?
     };
-
+    let admins_geofinder = admins.into_iter().collect::<AdminGeoFinder>();
     if args.import_way {
         info!("Extracting streets from osm");
         let mut streets = streets(
             &mut osm_reader,
-            &admins.iter().cloned().collect(),
+            &admins_geofinder,
             &args.db_file,
             args.db_buffer_size,
         )?;
@@ -150,10 +150,6 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
             })?;
         info!("Nb of indexed street: {}", nb_streets);
     }
-
-    // Geofinder with strict inclusion rules
-    let admins_geofinder: AdminGeoFinder = admins.into_iter().collect();
-
     if args.import_admin {
         let admin_index_settings = IndexSettings {
             nb_shards: args.nb_admin_shards,

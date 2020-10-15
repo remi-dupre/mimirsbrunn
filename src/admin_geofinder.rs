@@ -135,7 +135,9 @@ impl AdminGeoFinder {
         }
     }
 
-    // Get a list of admins with their parents that overlap the given coordinates
+    // Get all admins overlapping the given coordinates.
+    // Each element of the returned array contains a leaf of the admin hierarchy that overlap
+    // input coordinates together with its parents.
     pub fn get_all(&self, coord: &geo_types::Coordinate<f64>) -> Vec<Vec<Arc<Admin>>> {
         // Get a list of overlapping admins...
         let mut candidates = self

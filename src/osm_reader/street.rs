@@ -89,7 +89,7 @@ pub fn streets(
     info!("reading pbf done.");
 
     // Builder for street object
-    let build_poi =
+    let build_street =
         |id: String, name: String, coord: mimir::Coord, admins: Vec<Arc<mimir::Admin>>| {
             let admins_iter = admins.iter().map(Deref::deref);
             let country_codes = utils::find_country_codes(admins_iter.clone());
@@ -121,7 +121,7 @@ pub fn streets(
                 }
             };
 
-            build_poi(doc_id, name.clone(), coord, admins)
+            build_street(doc_id, name.clone(), coord, admins)
         })
     };
 
@@ -137,8 +137,15 @@ pub fn streets(
 
     objs_map.for_each_filter(Kind::Relation, |obj| {
         let rel = obj.relation().expect("invalid relation filter");
-        let rel_name = rel.tags.get("name").map(String::as_str);
-        let first_street = rel
+        let rel_name = rel.tags.get("name");
+
+        // Add osmid of all the relation members in the set.
+        // Then, we won't create any street for the ways that belong to this relation.
+        for ref_obj in &rel.refs {
+            street_in_relation.insert(ref_obj.member);
+        }
+
+        let rel_street = rel
             .refs
             .iter()
             .filter(|ref_obj| ref_obj.member.is_way() && ref_obj.role == "street")
@@ -146,13 +153,7 @@ pub fn streets(
                 let obj = objs_map.get(&ref_obj.member)?;
                 let way = obj.way()?;
                 let coord = get_way_coord(&objs_map, &way);
-                let name = rel_name
-                    .or_else(|| way.tags.get("name").map(String::as_str))
-                    .unwrap_or("");
-
-                // Add osmid of all the relation members in the set
-                // We don't create any street for all the osmid present in street_rel
-                street_in_relation.insert(ref_obj.member);
+                let name = rel_name.or_else(|| way.tags.get("name"))?;
 
                 Some(pois_with_admin(
                     name.to_string(),
@@ -164,7 +165,7 @@ pub fn streets(
             })
             .next();
 
-        if let Some(street) = first_street {
+        if let Some(street) = rel_street {
             street_list.extend(street);
         }
     });
@@ -198,14 +199,14 @@ pub fn streets(
             .values()
             .filter_map(|min_id| {
                 let obj = objs_map.get(&min_id)?;
-                let way = obj.way()?.clone();
+                let way = obj.way()?;
 
                 Some(pois_with_admin(
                     way.tags.get("name")?.to_string(),
                     way.id.0,
                     "way",
-                    get_street_admin(admins_geofinder, &objs_map, &way),
-                    get_way_coord(&objs_map, &way),
+                    get_street_admin(admins_geofinder, &objs_map, way),
+                    get_way_coord(&objs_map, way),
                 ))
             })
             .flatten(),
