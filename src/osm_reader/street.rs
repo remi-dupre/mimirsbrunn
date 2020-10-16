@@ -37,6 +37,7 @@ use super::osm_utils::get_way_coord;
 use super::OsmPbfReader;
 use crate::admin_geofinder::AdminGeoFinder;
 use crate::{labels, utils, Error};
+use cosmogony::ZoneType;
 use failure::ResultExt;
 use osmpbfreader::StoreObjs;
 use slog_scope::info;
@@ -184,11 +185,20 @@ pub fn streets(
 
         if let Some(name) = way.tags.get("name") {
             for admins in get_street_admin(admins_geofinder, &objs_map, way) {
-                let cities: Vec<_> = admins.into_iter().filter(|admin| admin.is_city()).collect();
+                let city = admins
+                    .iter()
+                    .find(|admin| admin.is_city())
+                    .map(|city| city.id.to_string());
+
                 name_admin_map
-                    .entry((name.to_string(), cities))
-                    .and_modify(|stored| *stored = std::cmp::min(*stored, osmid))
-                    .or_insert(osmid);
+                    .entry((name.to_string(), city))
+                    .and_modify(|(stored_id, stored_admins)| {
+                        if *stored_id > osmid {
+                            *stored_id = std::cmp::min(*stored_id, osmid);
+                            *stored_admins = admins.clone();
+                        }
+                    })
+                    .or_insert((osmid, admins));
             }
         }
     });
@@ -196,8 +206,8 @@ pub fn streets(
     // Create a street for each way with osmid present in objs_map
     street_list.extend(
         name_admin_map
-            .values()
-            .filter_map(|min_id| {
+            .into_iter()
+            .filter_map(|(_, (min_id, admins))| {
                 let obj = objs_map.get(&min_id)?;
                 let way = obj.way()?;
 
@@ -205,7 +215,7 @@ pub fn streets(
                     way.tags.get("name")?.to_string(),
                     way.id.0,
                     "way",
-                    get_street_admin(admins_geofinder, &objs_map, way),
+                    vec![admins],
                     get_way_coord(&objs_map, way),
                 ))
             })
@@ -237,7 +247,9 @@ fn get_street_admin<T: StoreObjs + Getter>(
             })
         })
         .next()
-        .map_or(vec![], |c| admins_geofinder.get_all(&c))
+        .map_or(vec![], |c| {
+            admins_geofinder.get_with_granularity(&c, ZoneType::City)
+        })
 }
 
 pub fn compute_street_weight(streets: &mut Vec<mimir::Street>) {
