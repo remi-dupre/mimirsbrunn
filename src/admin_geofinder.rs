@@ -136,15 +136,17 @@ impl AdminGeoFinder {
         }
     }
 
-    // Get all admins overlapping the given coordinates of zone type at most `granularity`.
-    // Each element of the returned array contains a leaf of the admin hierarchy that overlap
-    // input coordinates together with its parents.
+    // Get all admins overlapping the given coordinates of zone type at most
+    // `granularity`.
+    //
+    // Each element of the returned array contains a leaf of the admin hierarchy
+    // that overlap input coordinates together with its parents.
     pub fn get_with_granularity(
         &self,
         coord: &geo_types::Coordinate<f64>,
-        granularity: ZoneType,
+        max_split_zone_type: ZoneType,
     ) -> Vec<Vec<Arc<Admin>>> {
-        // Get a list of overlapping admins...
+        // Get a list of overlapping admins whose zone_type is less than granularity
         let mut candidates = self
             .rtree
             .locate_with_selection_function(PointInEnvelopeSelectionFunction {
@@ -153,12 +155,16 @@ impl AdminGeoFinder {
             .filter(|cand| {
                 cand.admin
                     .zone_type
-                    .map(|zt| zt <= granularity)
+                    .map(|zt| zt <= max_split_zone_type)
                     .unwrap_or(false)
             })
             .collect::<Vec<_>>();
 
-        let mut visited: HashSet<&str> = HashSet::new();
+        // Keep track of the admins that have already been visited as a parent. In such
+        // a case we don't need to check if it needs to be returned as it will be part
+        // of the input as parent of another admin.
+        let mut visited_ids = HashSet::new();
+
         candidates.sort_by_key(|cand| cand.admin.zone_type);
         candidates
             .into_iter()
@@ -166,7 +172,7 @@ impl AdminGeoFinder {
                 let admin = cand.admin.clone();
                 let bound = &cand.boundary;
 
-                if !visited.contains(admin.id.as_str())
+                if !visited_ids.contains(admin.id.as_str())
                     && bound.intersects(&geo_types::Point(*coord))
                 {
                     let mut res = vec![admin];
@@ -178,11 +184,10 @@ impl AdminGeoFinder {
                         .as_ref()
                         .and_then(|parent_id| self.admin_by_id.get(parent_id.as_str()))
                     {
-                        visited.insert(parent.id.as_str());
+                        visited_ids.insert(parent.id.as_str());
                         res.push(parent.clone());
                     }
 
-                    res.reverse();
                     Some(res)
                 } else {
                     None

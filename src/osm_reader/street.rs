@@ -185,20 +185,22 @@ pub fn streets(
 
         if let Some(name) = way.tags.get("name") {
             for admins in get_street_admin(admins_geofinder, &objs_map, way) {
-                let city = admins
+                // Discriminate ways with same names by city
+                if let Some(city) = admins
                     .iter()
                     .find(|admin| admin.is_city())
-                    .map(|city| city.id.to_string());
-
-                name_admin_map
-                    .entry((name.to_string(), city))
-                    .and_modify(|(stored_id, stored_admins)| {
-                        if *stored_id > osmid {
-                            *stored_id = std::cmp::min(*stored_id, osmid);
-                            *stored_admins = admins.clone();
-                        }
-                    })
-                    .or_insert((osmid, admins));
+                    .map(|city| city.id.to_string())
+                {
+                    name_admin_map
+                        .entry((name.to_string(), city))
+                        .and_modify(|(stored_id, stored_admins)| {
+                            if *stored_id > osmid {
+                                *stored_id = std::cmp::min(*stored_id, osmid);
+                                *stored_admins = admins.clone();
+                            }
+                        })
+                        .or_insert((osmid, admins));
+                }
             }
         }
     });
