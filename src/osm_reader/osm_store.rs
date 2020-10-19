@@ -105,17 +105,17 @@ impl Getter for BTreeMap<OsmId, OsmObj> {
 }
 
 #[cfg(feature = "db-storage")]
-pub struct DB<'a> {
+pub struct DB {
     conn: Connection,
-    db_file: &'a PathBuf,
+    db_file: PathBuf,
     buffer: HashMap<OsmId, OsmObj>,
     db_buffer_size: usize,
 }
 
 #[cfg(feature = "db-storage")]
-impl<'a> DB<'a> {
-    fn new(db_file: &'a PathBuf, db_buffer_size: usize) -> Result<DB<'a>, String> {
-        let _ = fs::remove_file(db_file); // we ignore any potential error
+impl DB {
+    fn new(db_file: PathBuf, db_buffer_size: usize) -> Result<DB, String> {
+        let _ = fs::remove_file(&db_file); // we ignore any potential error
         let conn = Connection::open(&db_file)
             .map_err(|e| format!("failed to open SQLITE connection: {}", e))?;
 
@@ -160,6 +160,11 @@ impl<'a> DB<'a> {
             return Some(Cow::Owned(obj));
         }
         None
+    }
+
+    #[allow(dead_code)]
+    fn iter(&self) -> impl Iterator<Item = OsmObj> + '_ {
+        DbIter::new(&self.conn)
     }
 
     #[allow(dead_code)]
@@ -252,7 +257,54 @@ impl<'a> DB<'a> {
 }
 
 #[cfg(feature = "db-storage")]
-impl<'a> StoreObjs for DB<'a> {
+pub struct DbIter<'conn> {
+    _stmt: *mut rusqlite::Statement<'conn>,
+    rows: rusqlite::Rows<'conn>,
+}
+
+impl<'conn> DbIter<'conn> {
+    pub fn new(conn: &'conn Connection) -> Self {
+        let stmt = Box::leak(Box::new(
+            conn.prepare("SELECT obj FROM ids")
+                .expect("DB::iter: prepare failed"),
+        ));
+
+        Self {
+            _stmt: stmt,
+            rows: stmt.query(NO_PARAMS).unwrap(),
+        }
+    }
+}
+
+impl<'conn> Iterator for DbIter<'conn> {
+    type Item = OsmObj;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(
+            bincode::deserialize(
+                &self
+                    .rows
+                    .next()
+                    .expect("DB::iter: next failed")?
+                    .get_raw_checked(0)
+                    .expect("DB::iter: failed to get obj field")
+                    .as_blob()
+                    .expect("DB::iter: failed to get raw field value"),
+            )
+            .expect("DB::iter: serde conversion failed"),
+        )
+    }
+}
+
+impl<'conn> Drop for DbIter<'conn> {
+    fn drop(&mut self) {
+        // TODO: we should probably drop rows first
+        // unsafe { Box::from_raw(self.stmt) };
+    }
+}
+
+#[cfg(feature = "db-storage")]
+impl StoreObjs for DB {
     fn insert(&mut self, id: OsmId, obj: OsmObj) {
         if self.buffer.len() >= self.db_buffer_size {
             self.flush_buffer();
@@ -280,23 +332,23 @@ impl<'a> StoreObjs for DB<'a> {
 }
 
 #[cfg(feature = "db-storage")]
-impl<'a> Getter for DB<'a> {
+impl Getter for DB {
     fn get(&self, key: &OsmId) -> Option<Cow<OsmObj>> {
         self.get_from_id(key)
     }
 }
 
 #[cfg(feature = "db-storage")]
-impl<'a> Drop for DB<'a> {
+impl Drop for DB {
     fn drop(&mut self) {
-        let _ = fs::remove_file(self.db_file); // we ignore any potential error
+        let _ = fs::remove_file(&self.db_file); // we ignore any potential error
     }
 }
 
 #[cfg(feature = "db-storage")]
-pub enum ObjWrapper<'a> {
+pub enum ObjWrapper {
     Map(BTreeMap<osmpbfreader::OsmId, osmpbfreader::OsmObj>),
-    DB(DB<'a>),
+    DB(DB),
 }
 
 #[cfg(not(feature = "db-storage"))]
@@ -305,12 +357,9 @@ pub enum ObjWrapper {
 }
 
 #[cfg(feature = "db-storage")]
-impl<'a> ObjWrapper<'a> {
-    pub fn new(
-        db_file: &'a Option<PathBuf>,
-        db_buffer_size: usize,
-    ) -> Result<ObjWrapper<'a>, Error> {
-        Ok(if let Some(ref db_file) = db_file {
+impl ObjWrapper {
+    pub fn new(db_file: Option<PathBuf>, db_buffer_size: usize) -> Result<ObjWrapper, Error> {
+        Ok(if let Some(db_file) = db_file {
             info!("Running with DB storage");
             ObjWrapper::DB(DB::new(db_file, db_buffer_size).map_err(failure::err_msg)?)
         } else {
@@ -319,32 +368,27 @@ impl<'a> ObjWrapper<'a> {
         })
     }
 
-    #[allow(dead_code)]
-    pub fn for_each<F: FnMut(Cow<OsmObj>)>(&self, mut f: F) {
-        match *self {
-            ObjWrapper::Map(ref m) => {
-                for value in m.values() {
-                    f(Cow::Borrowed(value));
-                }
-            }
-            ObjWrapper::DB(ref db) => db.for_each(f),
+    pub fn iter(&self) -> Box<dyn Iterator<Item = Cow<OsmObj>> + '_> {
+        match self {
+            ObjWrapper::Map(map) => Box::new(map.values().map(Cow::Borrowed)),
+            ObjWrapper::DB(db) => Box::new(db.iter().map(Cow::Owned)),
         }
     }
 
-    pub fn for_each_filter<F: FnMut(Cow<OsmObj>)>(&self, filter: Kind, mut f: F) {
-        match *self {
-            ObjWrapper::Map(ref m) => {
-                m.values()
-                    .filter(|e| *get_kind!(e) == filter as i32)
-                    .for_each(|value| f(Cow::Borrowed(value)));
-            }
-            ObjWrapper::DB(ref db) => db.for_each_filter(filter, f),
-        }
+    #[allow(dead_code)]
+    pub fn for_each<F: FnMut(Cow<OsmObj>)>(&self, f: F) {
+        self.iter().for_each(f)
+    }
+
+    pub fn for_each_filter<F: FnMut(Cow<OsmObj>)>(&self, filter: Kind, f: F) {
+        self.iter()
+            .filter(|e| *get_kind!(e) == filter as i32)
+            .for_each(f)
     }
 }
 
 #[cfg(feature = "db-storage")]
-impl<'a> Getter for ObjWrapper<'a> {
+impl Getter for ObjWrapper {
     fn get(&self, key: &OsmId) -> Option<Cow<OsmObj>> {
         match *self {
             ObjWrapper::Map(ref m) => m.get(key).map(|x| Cow::Borrowed(x)),
@@ -354,7 +398,7 @@ impl<'a> Getter for ObjWrapper<'a> {
 }
 
 #[cfg(feature = "db-storage")]
-impl<'a> StoreObjs for ObjWrapper<'a> {
+impl StoreObjs for ObjWrapper {
     fn insert(&mut self, id: OsmId, obj: OsmObj) {
         match *self {
             ObjWrapper::Map(ref mut m) => {

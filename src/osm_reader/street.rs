@@ -39,6 +39,7 @@ use crate::admin_geofinder::AdminGeoFinder;
 use crate::{labels, utils, Error};
 use cosmogony::ZoneType;
 use failure::ResultExt;
+use osmpbfreader::OsmObj;
 use osmpbfreader::StoreObjs;
 use slog_scope::info;
 use std::collections::{BTreeMap, HashSet};
@@ -59,7 +60,7 @@ pub enum Kind {
 pub fn streets(
     pbf: &mut OsmPbfReader,
     admins_geofinder: &AdminGeoFinder,
-    db_file: &Option<PathBuf>,
+    db_file: Option<PathBuf>,
     db_buffer_size: usize,
 ) -> Result<Vec<mimir::Street>, Error> {
     // This is the list of highway that we don't want to index
@@ -136,40 +137,45 @@ pub fn streets(
     // the osm ways in the relation not to index them twice.
     let mut street_in_relation = HashSet::new();
 
-    objs_map.for_each_filter(Kind::Relation, |obj| {
-        let rel = obj.relation().expect("invalid relation filter");
-        let rel_name = rel.tags.get("name");
-
-        // Add osmid of all the relation members in the set.
-        // Then, we won't create any street for the ways that belong to this relation.
-        for ref_obj in &rel.refs {
-            street_in_relation.insert(ref_obj.member);
-        }
-
-        let rel_street = rel
-            .refs
+    use par_map::ParMap;
+    street_list.extend(
+        objs_map
             .iter()
-            .filter(|ref_obj| ref_obj.member.is_way() && ref_obj.role == "street")
-            .filter_map(|ref_obj| {
-                let obj = objs_map.get(&ref_obj.member)?;
-                let way = obj.way()?;
-                let coord = get_way_coord(&objs_map, &way);
-                let name = rel_name.or_else(|| way.tags.get("name"))?;
+            .map(|x| unsafe { std::mem::transmute::<_, std::borrow::Cow<OsmObj>>(x) })
+            .filter(|obj| matches!(obj.as_ref(), OsmObj::Relation(_)))
+            .par_map(|obj| {
+                let rel = obj.relation().expect("invalid relation filter");
+                let rel_name = rel.tags.get("name");
 
-                Some(pois_with_admin(
-                    name.to_string(),
-                    rel.id.0,
-                    "relation",
-                    get_street_admin(admins_geofinder, &objs_map, &way),
-                    coord,
-                ))
+                // Add osmid of all the relation members in the set.
+                // Then, we won't create any street for the ways that belong to this relation.
+                // for ref_obj in &rel.refs {
+                //     street_in_relation.insert(ref_obj.member);
+                // }
+
+                rel.refs
+                    .iter()
+                    .filter(|ref_obj| ref_obj.member.is_way() && ref_obj.role == "street")
+                    .filter_map(|ref_obj| {
+                        let obj = objs_map.get(&ref_obj.member)?;
+                        let way = obj.way()?;
+                        let coord = get_way_coord(&objs_map, &way);
+                        let name = rel_name.or_else(|| way.tags.get("name"))?;
+
+                        Some(pois_with_admin(
+                            name.to_string(),
+                            rel.id.0,
+                            "relation",
+                            get_street_admin(admins_geofinder, &objs_map, &way),
+                            coord,
+                        ))
+                    })
+                    .next()
+                    .into_iter()
+                    .flatten()
             })
-            .next();
-
-        if let Some(street) = rel_street {
-            street_list.extend(street);
-        }
-    });
+            .flatten(),
+    );
 
     // We merge all the ways with same `way_name` and `admin list of level(=city_level)`
     // We use a Map to keep track of the way of smallest Id for a given pair of "name + cities list"

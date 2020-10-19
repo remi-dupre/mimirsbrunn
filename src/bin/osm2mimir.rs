@@ -128,7 +128,7 @@ fn run(args: Args) -> Result<(), mimirsbrunn::Error> {
         let mut streets = streets(
             &mut osm_reader,
             &admins_geofinder,
-            &args.db_file,
+            args.db_file.clone(),
             args.db_buffer_size,
         )?;
 
