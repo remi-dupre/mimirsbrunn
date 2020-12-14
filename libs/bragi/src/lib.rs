@@ -49,6 +49,7 @@ pub(crate) mod query;
 mod query_settings;
 mod routes;
 pub mod server;
+pub(crate) mod utils;
 
 pub use query::make_place as query_make_place;
 pub use query_settings::QuerySettings;
@@ -140,7 +141,7 @@ impl TryFrom<&Args> for Context {
                     Some(dt) => t.min(dt),
                     None => t,
                 })
-                .or_else(|| max_es_timeout)
+                .or(max_es_timeout)
         };
 
         let content = match args.weight_config_file {
@@ -168,7 +169,7 @@ impl TryFrom<&Args> for Context {
                     "failed to parse `{}`: {}",
                     args.weight_config_file
                         .as_deref()
-                        .unwrap_or_else(|| "config/bragi-settings.toml"),
+                        .unwrap_or("config/bragi-settings.toml"),
                     err
                 )
             })?,

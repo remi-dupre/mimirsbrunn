@@ -28,17 +28,20 @@
 // https://groups.google.com/d/forum/navitia
 // www.navitia.io
 use super::model::{self, BragiError};
-use crate::query_settings::{BuildWeight, Proximity, QuerySettings, Types};
+use crate::{
+    query_settings::{BuildWeight, Proximity, QuerySettings, Types},
+    utils::read_places_es7,
+};
 use geojson::Geometry;
 use mimir::objects::{Addr, Admin, Coord, MimirObject, Poi, Stop, Street};
 use mimir::rubber::{get_indexes, read_places, Rubber};
 use prometheus::{self, exponential_buckets, histogram_opts, register_histogram_vec, HistogramVec};
 use rs_es::error::EsError;
-use rs_es::operations::search::Source;
 use rs_es::query::compound::BoostMode;
-use rs_es::query::functions::{DecayOptions, FilteredFunction, Function, Modifier};
+use rs_es::query::functions::{DecayOptions, FilteredFunction, Function};
 use rs_es::query::Query;
 use rs_es::units as rs_u;
+use serde_json::json;
 use slog_scope::{debug, error, warn};
 use std::{fmt, iter};
 
@@ -171,8 +174,35 @@ fn build_with_weight(build_weight: &BuildWeight, types: &Types) -> Query {
         .build()
 }
 
+fn build_with_weight_es7(build_weight: &BuildWeight, types: &Types) -> serde_json::Value {
+    let weighted = |doc_type, weight| {
+        json!({
+            "filter": {"term": {"_type": {"value": doc_type}}},
+            "field_value_factor": {
+                "field": "weight",
+                "factor": build_weight.factor,
+                "missing": build_weight.missing
+            },
+            "weight": weight
+        })
+    };
+
+    json!({
+        "function_score": {
+            "functions": [
+                weighted(Stop::doc_type(), types.stop),
+                weighted(Addr::doc_type(), types.address),
+                weighted(Admin::doc_type(), types.admin),
+                weighted(Poi::doc_type(), types.poi),
+                weighted(Street::doc_type(), types.street)
+            ],
+            "boost_mode": "replace"
+        }
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
-fn build_query<'a>(
+fn build_query_es7<'a>(
     q: &str,
     match_type: MatchType,
     coord: Option<Coord>,
@@ -180,74 +210,96 @@ fn build_query<'a>(
     pt_datasets: &[&str],
     all_data: bool,
     langs: &'a [&'a str],
-    zone_types: &[&str],
-    poi_types: &[&str],
+    _zone_types: &[&str],
+    _poi_types: &[&str],
     query_settings: &QuerySettings,
-) -> Query {
-    // Priorization by type
-    fn match_type_with_boost<T: MimirObject>(boost: f64) -> Query {
-        Query::build_term("_type", T::doc_type())
-            .with_boost(boost)
-            .build()
+) -> serde_json::Value {
+    fn match_type_with_boost<T: MimirObject>(boost: f64) -> serde_json::Value {
+        json!({
+            "term": {
+                "_type": {
+                    "value": T::doc_type(),
+                    "boost": boost
+                }
+            }
+        })
     }
-    let type_query = Query::build_bool()
-        .with_should(vec![
-            match_type_with_boost::<Addr>(query_settings.type_query.boosts.address),
-            match_type_with_boost::<Admin>(query_settings.type_query.boosts.admin),
-            match_type_with_boost::<Stop>(query_settings.type_query.boosts.stop),
-            match_type_with_boost::<Poi>(query_settings.type_query.boosts.poi),
-            match_type_with_boost::<Street>(query_settings.type_query.boosts.street),
-        ])
-        .with_boost(query_settings.type_query.global)
-        .build();
 
     let format_names_field = |lang| format!("names.{}", lang);
     let format_labels_field = |lang| format!("labels.{}", lang);
     let format_labels_prefix_field = |lang| format!("labels.{}.prefix", lang);
-
     let build_multi_match =
-        |default_field: &str, lang_field_formatter: &dyn Fn(&'a &'a str) -> String| {
+        |default_field: &str, lang_field_formatter: &dyn Fn(&'a &'a str) -> String, boost: f64| {
             let boosted_i18n_fields = langs.iter().map(lang_field_formatter);
             let fields: Vec<String> = iter::once(default_field.into())
                 .chain(boosted_i18n_fields)
                 .collect();
-            Query::build_multi_match(fields, q)
+            json!({
+                "multi_match": {
+                    "fields": fields,
+                    "query": q,
+                    "boost": boost
+                }
+            })
         };
 
-    // Priorization by query string
+    // --- Priorization by query string
+
     let mut string_should = vec![
-        build_multi_match("name", &format_names_field)
-            .with_boost(query_settings.string_query.boosts.name)
-            .build(),
-        build_multi_match("label", &format_labels_field)
-            .with_boost(query_settings.string_query.boosts.label)
-            .build(),
-        build_multi_match("label.prefix", &format_labels_prefix_field)
-            .with_boost(query_settings.string_query.boosts.label_prefix)
-            .build(),
-        Query::build_match("zip_codes", q)
-            .with_boost(query_settings.string_query.boosts.zip_codes)
-            .build(),
-        Query::build_match("house_number", q)
-            .with_boost(query_settings.string_query.boosts.house_number)
-            .build(),
+        build_multi_match(
+            "name",
+            &format_names_field,
+            query_settings.string_query.boosts.name,
+        ),
+        build_multi_match(
+            "label",
+            &format_labels_field,
+            query_settings.string_query.boosts.label,
+        ),
+        build_multi_match(
+            "label.prefix",
+            &format_labels_prefix_field,
+            query_settings.string_query.boosts.label_prefix,
+        ),
+        json!({
+            "match": {
+                "zip_codes": {
+                    "query": q,
+                    "boost": query_settings.string_query.boosts.zip_codes
+                }
+            }
+        }),
+        json!({
+            "match": {
+                "house_number": {
+                    "query": q,
+                    "boost": query_settings.string_query.boosts.house_number
+                }
+            }
+        }),
     ];
+
     if let MatchType::Fuzzy = match_type {
         let format_labels_ngram_field = |lang| format!("labels.{}.ngram", lang);
-        string_should.push(if coord.is_some() {
-            build_multi_match("label.ngram", &format_labels_ngram_field)
-                .with_boost(query_settings.string_query.boosts.label_ngram_with_coord)
-                .build()
-        } else {
-            build_multi_match("label.ngram", &format_labels_ngram_field)
-                .with_boost(query_settings.string_query.boosts.label_ngram)
-                .build()
+
+        string_should.push({
+            if coord.is_some() {
+                build_multi_match(
+                    "label.ngram",
+                    &format_labels_ngram_field,
+                    query_settings.string_query.boosts.label_ngram_with_coord,
+                )
+            } else {
+                build_multi_match(
+                    "label.ngram",
+                    &format_labels_ngram_field,
+                    query_settings.string_query.boosts.label_ngram,
+                )
+            }
         });
     }
-    let string_query = Query::build_bool()
-        .with_should(string_should)
-        .with_boost(query_settings.string_query.global)
-        .build();
+
+    // --- Importance query
 
     let settings = &query_settings.importance_query.weights;
 
@@ -293,32 +345,37 @@ fn build_query<'a>(
         ))
     }
 
+    // Priorization by importance
+    let mut importance_queries = vec![build_with_weight_es7(&weights, &settings.types)];
+
+    if let Some(_coord) = coord {
+        todo!()
+    }
+
     match match_type {
         MatchType::Prefix => {
-            let admin_importance_query = Query::build_function_score()
-                .with_query(Query::build_term("_type", Admin::doc_type()).build())
-                .with_functions(vec![
-                    FilteredFunction::build_filtered_function(
-                        None,
-                        Function::build_field_value_factor("weight")
-                            .with_factor(1e6)
-                            .with_modifier(Modifier::Log1p)
-                            .with_missing(0.)
-                            .build(),
-                        None,
-                    ),
-                    FilteredFunction::build_filtered_function(
-                        None,
-                        Function::build_weight(weights.admin).build(),
-                        None,
-                    ),
-                ])
-                .with_boost_mode(BoostMode::Replace)
-                .build();
-            importance_queries.push(admin_importance_query);
+            importance_queries.push(json!({
+                "function_score": {
+                    "query": {
+                        "term": {"_type": {"value": Admin::doc_type()}}
+                    },
+                    "functions": [
+                        {
+                            "field_value_factor": {
+                                "field": "weight",
+                                "factor": 1e6,
+                                "modifier": "log1p",
+                                "missing": 0.
+                            }
+                        }
+                    ]
+                }
+            }));
         }
         MatchType::Fuzzy => {}
     };
+
+    // --- Filters
 
     let house_number_condition = {
         if q.split_whitespace().count() > 1 {
@@ -326,24 +383,19 @@ fn build_query<'a>(
             // We either want:
             // * to exactly match the document house_number
             // * or that the document has no house_number
-            Query::build_bool()
-                .with_should(vec![
-                    Query::build_bool()
-                        .with_must_not(Query::build_exists("house_number").build())
-                        .build(),
-                    Query::build_match("house_number", q.to_string()).build(),
-                ])
-                .build()
+            json!({
+                "bool": {
+                    "should": [
+                        {"bool": {"must_not": {"exists": {"field": "house_number"}}}},
+                        {"match": {"house_number": {"query": q}}}
+                    ]
+                }
+            })
         } else {
             // If the query contains a single word, we don't exect any house number in the result.
-            Query::build_bool()
-                .with_must_not(Query::build_exists("house_number").build())
-                .build()
+            json!({"bool": {"must_not": {"exists": {"field": "house_number"}}}})
         }
     };
-
-    use rs_es::query::CombinationMinimumShouldMatch;
-    use rs_es::query::MinimumShouldMatch;
 
     let matching_condition = match match_type {
         // When the match type is Prefix, we want to use every possible information even though
@@ -351,9 +403,16 @@ fn build_query<'a>(
         // The field full_label contains all of them and will do the trick.
         // The query must at least match with elision activated, matching without elision will
         // provide extra score bellow.
-        MatchType::Prefix => Query::build_match("full_label.prefix".to_string(), q.to_string())
-            .with_operator("and")
-            .build(),
+        MatchType::Prefix => {
+            json!({
+                "match": {
+                    "full_label.prefix": {
+                        "query": q,
+                        "operator": "and"
+                    }
+                }
+            })
+        }
         // for fuzzy search we lower our expectation & we accept a certain percentage of token match
         // on full_label.ngram
         // The values defined here are empirical,
@@ -364,74 +423,69 @@ fn build_query<'a>(
         //     Vaureaaal (instead of Vaureal)
         // Very long requests:
         //     Caisse Primaire d'Assurance Maladie de Haute Garonne, 33 Rue du Lot, 31100 Toulouse
-        MatchType::Fuzzy => Query::build_match("full_label.ngram".to_string(), q.to_string())
-            .with_minimum_should_match(MinimumShouldMatch::from(vec![
-                CombinationMinimumShouldMatch::new(1i64, -1i64),
-                CombinationMinimumShouldMatch::new(3i64, -2i64),
-                CombinationMinimumShouldMatch::new(9i64, -4i64),
-                CombinationMinimumShouldMatch::new(20i64, 25f64),
-            ]))
-            .build(),
+        MatchType::Fuzzy => {
+            todo!()
+        }
     };
 
     let mut filters = vec![house_number_condition, matching_condition];
 
-    // if searching through all data, no coverage filter
+    // If searching through all data, no coverage filter
     if !all_data {
-        filters.push(build_coverage_condition(pt_datasets));
+        filters.push(json!({
+            "bool": {
+                "should": [
+                    {"bool": {"must_not": {"exists": {"field": "coverages"}}}},
+                    {"terms": {"coverages": pt_datasets}}
+                ]
+            }
+        }));
     }
 
     // We want to limit the search to the geographic shape given in argument,
     // except for stop areas
-    if let Some(s) = shape {
-        let filter_wo_stop = Query::build_bool()
-            .with_must(vec![
-                Query::build_bool()
-                    .with_must_not(Query::build_term("_type", Stop::doc_type()).build())
-                    .build(),
-                Query::build_geo_shape("approx_coord")
-                    .with_geojson(s)
-                    .build(),
-            ])
-            .build();
-        let filter_w_stop = Query::build_term("_type", Stop::doc_type()).build();
-        let geo_filter = Query::build_bool()
-            .with_should(vec![filter_w_stop, filter_wo_stop])
-            .build();
-        filters.push(geo_filter);
+    if let Some(_s) = shape {
+        todo!()
     }
 
-    let mut query = Query::build_bool()
-        .with_must(vec![type_query, string_query])
-        .with_should(importance_queries)
-        .with_filter(Query::build_bool().with_must(filters).build());
+    // --- Build
 
-    if !zone_types.is_empty() {
-        query = query.with_filter(
-            Query::build_bool()
-                .with_should(
-                    zone_types
-                        .iter()
-                        .map(|x| Query::build_match("zone_type", *x).build())
-                        .collect::<Vec<_>>(),
-                )
-                .build(),
-        );
-    }
-    if !poi_types.is_empty() {
-        query = query.with_filter(
-            Query::build_bool()
-                .with_should(
-                    poi_types
-                        .iter()
-                        .map(|x| Query::build_match("poi_type.id", *x).build())
-                        .collect::<Vec<_>>(),
-                )
-                .build(),
-        );
-    }
-
-    query.build()
+    json!({
+        "bool": {
+            "must": [
+                {
+                    "bool": {
+                        "should": [
+                            match_type_with_boost::<Addr>(
+                                query_settings.type_query.boosts.address
+                            ),
+                            match_type_with_boost::<Admin>(
+                                query_settings.type_query.boosts.admin
+                            ),
+                            match_type_with_boost::<Stop>(
+                                query_settings.type_query.boosts.stop
+                            ),
+                            match_type_with_boost::<Poi>(
+                                query_settings.type_query.boosts.poi
+                            ),
+                            match_type_with_boost::<Street>(
+                                query_settings.type_query.boosts.street
+                            )
+                        ],
+                        "boost": query_settings.type_query.global
+                    }
+                },
+                {
+                    "bool": {
+                        "should": string_should,
+                        "boost": query_settings.string_query.global
+                    }
+                }
+            ],
+            "filter": {"bool": {"must": filters}},
+            "should": importance_queries
+        }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -454,7 +508,7 @@ fn query(
     query_settings: &QuerySettings,
 ) -> Result<Vec<mimir::Place>, EsError> {
     let query_type = match_type.to_string();
-    let query = build_query(
+    let es7_query = build_query_es7(
         q,
         match_type,
         coord,
@@ -487,36 +541,49 @@ fn query(
         )
         .ok();
 
-    let timeout = rubber.timeout.map(|t| format!("{:?}", t));
-    let mut search_query = rubber.es_client.search_query();
+    // --- ES7 experimentation
+    use elasticsearch::{http::transport::Transport, Elasticsearch, SearchParts};
 
-    let search_query = search_query
-        .with_ignore_unavailable(true)
-        .with_indexes(&indexes)
-        .with_query(&query)
-        .with_from(offset)
-        .with_size(limit)
-        // No need to fetch "boundary" as it's not used in the geocoding response
-        // and is very large in some documents (countries...)
-        .with_source(Source::exclude(&["boundary"]));
+    let transport = Transport::single_node("http://0.0.0.0:32770").unwrap();
+    let client = Elasticsearch::new(transport);
 
-    // We don't want to clutter the Query URL, so we only add an explanation if the option is used
-    let search_query = if debug {
-        search_query.with_explain(true)
-    } else {
-        search_query
-    };
+    let mut search_query_es7 = serde_json::json!({
+        "query": es7_query,
+        "ignore_unavailable": true,
+        "from": offset,
+        "size": limit,
+        "_source_excludes": ["boundary"]
+    });
 
-    if let Some(timeout) = &timeout {
-        search_query.with_timeout(timeout.as_str());
+    if debug {
+        search_query_es7["explain"] = true.into();
     }
-    let result = search_query.send()?;
+
+    if let Some(timeout) = rubber.timeout.map(|t| format!("{:?}", t)) {
+        search_query_es7["timeout"] = timeout.into();
+    }
+
+    let result: crate::utils::Results = crate::utils::block_on(async {
+        client
+            .search(SearchParts::Index(&indexes))
+            .from(0)
+            .size(10)
+            .body(serde_json::json!({ "query": es7_query }))
+            .send()
+            .await
+            .expect("invalid response")
+            .json()
+            .await
+            .expect("invalid json")
+    });
+
+    // ---
 
     if let Some(t) = timer {
         t.observe_duration();
     }
 
-    read_places(result, coord.as_ref())
+    Ok(read_places_es7(result, coord.as_ref()))
 }
 
 pub fn features(
