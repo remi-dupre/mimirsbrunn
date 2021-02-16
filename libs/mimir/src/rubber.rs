@@ -28,8 +28,10 @@
 // https://groups.google.com/d/forum/navitia
 // www.navitia.io
 
+use super::objects::InsideAdmin;
 use super::objects::{Admin, Context, Explanation, MimirObject};
 use super::objects::{AliasOperation, AliasOperations, AliasParameter, Coord, Place};
+use cosmogony::ZoneType;
 use failure::{bail, format_err, Error, ResultExt};
 use prometheus::{exponential_buckets, histogram_opts, register_histogram, Histogram};
 use reqwest::StatusCode;
@@ -42,7 +44,7 @@ use rs_es::units as rs_u;
 use rs_es::units::Duration;
 use rs_es::EsResponse;
 use slog_scope::{debug, info, warn};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
 use std::time;
 
@@ -632,24 +634,57 @@ impl Rubber {
         iter: I,
     ) -> Result<usize, rs_es::error::EsError>
     where
-        T: MimirObject + std::marker::Send + 'static,
+        T: MimirObject + InsideAdmin + std::marker::Send + 'static,
         I: Iterator<Item = T>,
     {
         use par_map::ParMap;
         use rs_es::operations::bulk::Action;
-        let mut nb = 0;
+
+        let mut global_stats = HashMap::new();
         let chunk_size = 1000;
-        let chunks = iter.pack(chunk_size).par_map(|v| {
-            v.into_iter()
-                .map(|v| {
-                    v.es_id()
+
+        let chunks = iter.pack(chunk_size).par_map(|chunk| {
+            // Collect the count of imported items per country.
+            let mut country_stats = HashMap::new();
+
+            let actions = chunk
+                .into_iter()
+                .map(|addr| {
+                    // Fetch admin for per-country stats.
+                    let country_code = addr
+                        .find_admin(|admin| admin.zone_type == Some(ZoneType::Country))
+                        .map(|admin| {
+                            let country_code = admin.country_codes.iter().min();
+                            country_code.unwrap_or_else(|| &admin.name).as_str()
+                        })
+                        .unwrap_or("other")
+                        .to_string();
+
+                    country_stats
+                        .entry(country_code)
+                        .and_modify(|count| *count += 1)
+                        .or_insert(1);
+
+                    // Compute action for ES.
+                    addr.es_id()
                         .into_iter()
-                        .fold(Action::index(v), |action, id| action.with_id(id))
+                        .fold(Action::index(addr), |action, id| action.with_id(id))
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+
+            (country_stats, actions)
         });
-        for chunk in chunks.filter(|c| !c.is_empty()) {
-            nb += chunk.len();
+
+        for (chunk_stats, chunk) in chunks.filter(|(_, c)| !c.is_empty()) {
+            // Agregate chunk statistics.
+            for (country, count) in chunk_stats {
+                global_stats
+                    .entry(country)
+                    .and_modify(|sum| *sum += count)
+                    .or_insert(count);
+            }
+
+            // Apply actions to ES.
             self.es_client
                 .bulk(&chunk)
                 .with_index(&index.name)
@@ -657,7 +692,15 @@ impl Rubber {
                 .send()?;
         }
 
-        Ok(nb)
+        // Output statistics.
+        let mut global_stats: Vec<_> = global_stats.into_iter().collect();
+        global_stats.sort_unstable_by_key(|(_, count)| *count);
+
+        for (country, count) in &global_stats {
+            info!("{:>10} {}", country, count);
+        }
+
+        Ok(global_stats.into_iter().map(|(_, count)| count).sum())
     }
 
     /// Shortcut to `index` for a public index
@@ -668,7 +711,7 @@ impl Rubber {
         iter: I,
     ) -> Result<usize, Error>
     where
-        T: MimirObject + std::marker::Send + 'static,
+        T: MimirObject + InsideAdmin + std::marker::Send + 'static,
         I: Iterator<Item = T>,
     {
         self.index(dataset, IndexVisibility::Public, index_settings, iter)
@@ -682,7 +725,7 @@ impl Rubber {
         iter: I,
     ) -> Result<usize, Error>
     where
-        T: MimirObject + std::marker::Send + 'static,
+        T: MimirObject + InsideAdmin + std::marker::Send + 'static,
         I: Iterator<Item = T>,
     {
         self.index(dataset, IndexVisibility::Private, index_settings, iter)
@@ -701,7 +744,7 @@ impl Rubber {
         iter: I,
     ) -> Result<usize, Error>
     where
-        T: MimirObject + std::marker::Send + 'static,
+        T: MimirObject + InsideAdmin + std::marker::Send + 'static,
         I: Iterator<Item = T>,
     {
         // TODO better error handling
